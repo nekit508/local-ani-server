@@ -1,0 +1,420 @@
+import pkgutil
+import importlib
+import re
+import time
+import unicodedata
+import glob
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import anicli_api.source as sources_pkg
+
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
+
+MAX_RETRIES = 3
+RETRY_DELAY = 5
+
+
+def sanitize(name, max_len=200):
+    name = unicodedata.normalize("NFKC", str(name))
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
+    name = re.sub(r"\s+", " ", name).strip(" .")
+    if not name:
+        name = "untitled"
+    if len(name) > max_len:
+        name = name[:max_len].rstrip(" .")
+    return name
+
+
+def pick(options, prompt, label=None):
+    if label is None:
+        label = lambda x: getattr(x, "title", None) or getattr(x, "name", None) or str(x)
+    for i, item in enumerate(options, 1):
+        print(f"  {i}. {label(item)}")
+    while True:
+        raw = input(f"{prompt} (номер): ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(options):
+            return options[int(raw) - 1]
+        print("  Не то.")
+
+
+def list_sources():
+    found = []
+    for m in pkgutil.iter_modules(sources_pkg.__path__):
+        if m.name.startswith("_"):
+            continue
+        try:
+            module = importlib.import_module(f"anicli_api.source.{m.name}")
+        except Exception as e:
+            print(f"  [skip] {m.name}: {e}")
+            continue
+        cls = getattr(module, "Extractor", None)
+        if cls is None:
+            for attr in dir(module):
+                if attr.endswith("Extractor") and attr != "BaseExtractor":
+                    cls = getattr(module, attr)
+                    break
+        if cls is not None:
+            found.append((m.name, cls))
+    return found
+
+
+def ep_number(ep, fallback):
+    n = getattr(ep, "number", None)
+    if n is not None:
+        try:
+            return int(n)
+        except (TypeError, ValueError):
+            pass
+    title = getattr(ep, "title", None) or getattr(ep, "name", "") or ""
+    m = re.search(r"\d+", str(title))
+    if m:
+        return int(m.group())
+    return fallback
+
+
+def source_name(s):
+    return getattr(s, "name", None) or getattr(s, "title", None) or str(s)
+
+
+def dubbing_from_source(s):
+    name = source_name(s)
+    name = re.sub(r'^\s*(Озвучка|озвучка|Ozvuchka|Dub|DUB)\s+', '', name).strip()
+    return name or "default"
+
+
+def video_key(v):
+    return (getattr(v, "type", None), getattr(v, "quality", None))
+
+
+def video_label(v):
+    q = getattr(v, "quality", None)
+    if q is None:
+        return "default"
+    s = str(q).strip()
+    return s if s else "default"
+
+
+def extract_direct_url(video_url):
+    if "kodik" in video_url:
+        try:
+            from anicli_api.player.kodik import Kodik
+            videos = Kodik().parse(video_url)
+            if videos:
+                return videos[0].url
+        except Exception as e:
+            print(f"  [kodik parser error] {e}")
+    elif "sibnet" in video_url:
+        try:
+            from anicli_api.player.sibnet import SibNet
+            videos = SibNet().parse(video_url)
+            if videos:
+                return videos[0].url
+        except Exception as e:
+            print(f"  [sibnet parser error] {e}")
+    return video_url
+
+
+def _ffmpeg_ok():
+    return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+
+
+def find_downloaded(out_dir: Path, filename: str):
+    matches = list(out_dir.glob(glob.escape(filename) + ".*"))
+    final = [m for m in matches if m.suffix.lower() != ".part"]
+    return final[0] if final else (matches[0] if matches else None)
+
+
+def verify_media(path: Path, tol: float = 1.0):
+    """Проверка целостности: длительности A/V + полное декодирование."""
+    if not path.exists():
+        return False, "файл отсутствует"
+    if not _ffmpeg_ok():
+        return True, "ffmpeg не найден, проверка пропущена"
+
+    # 1. Сравнение длительностей видео и аудио
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error",
+             "-show_entries", "stream=codec_type,duration",
+             "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        data = json.loads(out.stdout or "{}")
+    except Exception as e:
+        return False, f"ffprobe не запустился: {e}"
+
+    v_dur = a_dur = None
+    for s in data.get("streams", []):
+        try:
+            d = float(s.get("duration")) if s.get("duration") else None
+        except (TypeError, ValueError):
+            d = None
+        if s.get("codec_type") == "video" and d and v_dur is None:
+            v_dur = d
+        if s.get("codec_type") == "audio" and d and a_dur is None:
+            a_dur = d
+
+    if v_dur and a_dur and abs(v_dur - a_dur) > tol:
+        return False, f"A/V рассинхрон: video={v_dur:.2f}s audio={a_dur:.2f}s"
+
+    # 2. Полное декодирование (ловит битые фрагменты)
+    try:
+        res = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(path), "-f", "null", "-"],
+            capture_output=True, text=True, timeout=7200,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "декодирование зависло"
+    except Exception as e:
+        return False, f"ffmpeg не запустился: {e}"
+
+    if res.returncode != 0 or res.stderr.strip():
+        first = (res.stderr.strip().splitlines() or ["unknown"])[0]
+        return False, f"битые кадры/поток: {first}"
+
+    return True, "ok"
+
+
+def download(video_url, out_dir, filename):
+    if yt_dlp is None:
+        print("yt-dlp не установлен. Выполни: uv pip install yt-dlp")
+        return False
+
+    direct_url = extract_direct_url(video_url)
+    if direct_url != video_url:
+        print(f"  Прямая ссылка получена")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmpl = str(out_dir / f"{filename}.%(ext)s")
+
+    opts = {
+        "outtmpl": tmpl,
+        "format": "bestvideo+bestaudio/best",
+        "merge_output_format": "mp4",
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": False,
+        "consoletitle": False,
+        "noplaylist": True,
+        # --- надёжность фрагментов ---
+        "retries": 20,                       # retry HTTP-запросов
+        "fragment_retries": 20,              # retry отдельных фрагментов HLS/DASH
+        "skip_unavailable_fragments": False, # НЕ пропускать битые фрагменты
+        "abort_on_error": True,              # падать сразу, а не клеить мусор
+        "concurrent_fragment_downloads": 1,  # серийно — стабильнее
+        "continuedl": True,                  # докачивать .part при повторе
+        "nocheckcertificate": False,
+        "http_chunk_size": 10485760,         # 10 МБ, меньше риск обрыва
+    }
+
+    # Удаляем возможные остатки прошлых попыток этого же файла
+    for old in out_dir.glob(glob.escape(filename) + ".*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([direct_url])
+    except Exception as e:
+        print(f"  Ошибка скачивания: {str(e).splitlines()[0]}")
+        return False
+
+    path = find_downloaded(out_dir, filename)
+    if path is None:
+        print("  Файл не найден после скачивания")
+        return False
+
+    ok, reason = verify_media(path)
+    if not ok:
+        print(f"  Проверка целостности не прошла: {reason}")
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        # Также подчистим .part, если остался
+        for p in out_dir.glob(glob.escape(filename) + ".*"):
+            if p.suffix.lower() == ".part":
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+        return False
+
+    print("  Проверка целостности: OK")
+    return True
+
+
+def find_episode_source(ep, shared_source):
+    ep_sources = ep.get_sources() if hasattr(ep, "get_sources") else []
+    if not ep_sources:
+        return None
+    obj = next((s for s in ep_sources if source_name(s) == shared_source), None)
+    return obj or ep_sources[0]
+
+
+def find_episode_video(ep_source_obj, shared_vkey):
+    vids = ep_source_obj.get_videos()
+    if not vids:
+        return None
+    v = next((x for x in vids if video_key(x) == shared_vkey), None)
+    return v or vids[0]
+
+
+def main():
+    sources = list_sources()
+    if not sources:
+        print("Источники не найдены. Проверь установку anicli-api.")
+        return
+
+    print("Доступные источники:")
+    for i, (name, _) in enumerate(sources, 1):
+        print(f"  {i}. {name}")
+
+    while True:
+        raw = input("Выбери источник (номер): ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(sources):
+            src_name, ExtractorCls = sources[int(raw) - 1]
+            break
+        print("  Не то.")
+
+    print(f"\nИсточник: {src_name}")
+    extractor = ExtractorCls()
+
+    query = input("Что ищем: ").strip()
+    if not query:
+        return
+
+    results = extractor.search(query)
+    if not results:
+        print("Ничего не найдено.")
+        return
+
+    print(f"\nНайдено {len(results)}:")
+    search_result = pick(results, "Выбери аниме")
+    anime = search_result.get_anime()
+    print(f"\n>> {anime.title}")
+
+    episodes = anime.get_episodes()
+    if not episodes:
+        print("Эпизодов нет.")
+        return
+
+    print(f"\nЭпизодов: {len(episodes)}")
+    raw = input("Эпизоды (номер, 1-5, all): ").strip().lower()
+    try:
+        if raw == "all":
+            selected = list(episodes)
+        elif "-" in raw:
+            a, b = raw.split("-", 1)
+            selected = list(episodes[int(a) - 1:int(b)])
+        else:
+            selected = [episodes[int(raw) - 1]]
+    except (ValueError, IndexError):
+        print("Не понял диапазон.")
+        return
+
+    if not selected:
+        print("Ничего не выбрано.")
+        return
+
+    first_ep = selected[0]
+    first_sources = first_ep.get_sources() if hasattr(first_ep, "get_sources") else []
+    if not first_sources:
+        print("У первого эпизода нет источников видео.")
+        return
+
+    print(f"\nИсточников: {len(first_sources)}")
+    chosen_source_obj = pick(first_sources, "Выбери источник", label=source_name)
+    shared_source = source_name(chosen_source_obj)
+
+    # ОЗВУЧКА = имя выбранного источника (без префикса "Озвучка ")
+    shared_dub = dubbing_from_source(chosen_source_obj)
+
+    videos = chosen_source_obj.get_videos()
+    if not videos:
+        print("Видео не найдено.")
+        return
+
+    print(f"Вариантов: {len(videos)}")
+    chosen_video = pick(videos, "Выбери качество", label=video_label)
+    shared_vkey = video_key(chosen_video)
+
+    folder = Path("downloads") / sanitize(src_name) / sanitize(anime.title) / sanitize(shared_dub)
+    print(f"\nОзвучка: {shared_dub}")
+    print(f"Папка: {folder}")
+
+    failed = []
+    for idx, ep in enumerate(selected, 1):
+        fallback_num = episodes.index(ep) + 1 if ep in episodes else idx
+        num = ep_number(ep, fallback_num)
+        ep_title = sanitize(getattr(ep, "title", None) or getattr(ep, "name", None) or "episode")
+        print(f"\n=== {num:02d}. {ep_title} ===")
+
+        ep_source_obj = find_episode_source(ep, shared_source)
+        if ep_source_obj is None:
+            print("  FAIL: нет источников видео")
+            failed.append((ep, num))
+            continue
+
+        ep_video = find_episode_video(ep_source_obj, shared_vkey)
+        if ep_video is None:
+            print("  FAIL: нет видео")
+            failed.append((ep, num))
+            continue
+
+        filename = sanitize(f"{anime.title} - {num:02d} - {ep_title}")
+        ok = False
+        for attempt in range(1, MAX_RETRIES + 1):
+            if attempt > 1:
+                print(f"  Попытка {attempt}/{MAX_RETRIES}...")
+                time.sleep(RETRY_DELAY)
+            if download(ep_video.url, folder, filename):
+                ok = True
+                break
+
+        if ok:
+            print(f"  OK ({shared_dub})")
+        else:
+            print(f"  FAIL после {MAX_RETRIES} попыток")
+            failed.append((ep, num))
+
+    if failed:
+        print(f"\n>>> Ретрай для {len(failed)} упавших эпизодов")
+        for ep, num in failed:
+            ep_title = sanitize(getattr(ep, "title", None) or getattr(ep, "name", None) or "episode")
+            print(f"\n=== RETRY {num:02d}. {ep_title} ===")
+
+            ep_source_obj = find_episode_source(ep, shared_source)
+            if ep_source_obj is None:
+                print("  FAIL повторно: нет источников")
+                continue
+
+            ep_video = find_episode_video(ep_source_obj, shared_vkey)
+            if ep_video is None:
+                print("  FAIL повторно: нет видео")
+                continue
+
+            filename = sanitize(f"{anime.title} - {num:02d} - {ep_title}")
+            ok = False
+            for attempt in range(1, MAX_RETRIES + 1):
+                if attempt > 1:
+                    print(f"  Попытка {attempt}/{MAX_RETRIES}...")
+                    time.sleep(RETRY_DELAY)
+                if download(ep_video.url, folder, filename):
+                    ok = True
+                    break
+            print(f"  OK ({shared_dub})" if ok else "  FAIL повторно")
+
+    print("\nГотово.")
+
+
+if __name__ == "__main__":
+    main()

@@ -11,7 +11,7 @@ export default async function ({ searchParams } : { searchParams: Promise<{ [key
 
     return animeInfo.ok ? (
         <div className="flex flex-col justify-start items-center">
-            <AnimeComponent anime={animeInfo.data()}/>
+            <AnimeComponent anime={animeInfo.data()} dataSource={source}/>
         </div>
     ) : <APIFail message={animeInfo.error_str()}/>
 }
