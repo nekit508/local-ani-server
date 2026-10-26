@@ -1,3 +1,4 @@
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -6,6 +7,16 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     JWT_ALG: str = "HS256"
     JWT_TOKEN_LIFETIME: int = 86400
+    DOWNLOAD_DIR: str = "."
+    WORKERS_NUM: int = 4
+    FRAGMENTS_PARALLEL: int = 4
+
+    BACK_HOST: str
+    BACK_PORT: int
 
 
-settings = Settings()
+try:
+    # noinspection PyArgumentList
+    settings = Settings()
+except ValidationError as e:
+    raise RuntimeError("Error while validating .env file:", e)

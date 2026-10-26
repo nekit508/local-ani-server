@@ -10,6 +10,7 @@ export default function () {
         <div className="flex flex-row items-start justify-center gap-4 p-4 border-b-1 border-foreground/50">
             <VarLink current={path} target={"/search"}> Search </VarLink>
             <VarLink current={path} target={"/home"}> Home </VarLink>
+            <VarLink current={path} target={"/workers"}> Workers </VarLink>
         </div>
     )
 }

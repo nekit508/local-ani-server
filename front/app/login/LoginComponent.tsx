@@ -5,7 +5,6 @@ import {ChangeEventHandler, SubmitEventHandler, useState} from "react";
 import {login} from "@/api/login";
 import {waited} from "@/api/core";
 import {useRouter, useSearchParams} from "next/navigation";
-import {RestResponse} from "@/api/types";
 
 export default function () {
     const [data, setData] = useState({
@@ -22,12 +21,9 @@ export default function () {
 
     const send: SubmitEventHandler<HTMLFormElement> = function (e) {
         e.preventDefault()
-        setState(undefined)
 
-        waited(login(data), res => {
+        waited([login(data), null], res => {
             if (res !== null && res !== undefined) {
-                res = res as RestResponse<any>
-
                 if (res.ok) {
                     setState(null)
                     router.replace(params.get("from") || "/home") // TODO FIXME vulnerability open redirect
@@ -35,10 +31,10 @@ export default function () {
                 } else {
                     setState(res.error_str())
                 }
-            } else {
+            } else if (res !== undefined) {
                 setState("No response from proxy");
             }
-        })
+        }, e => setState(String(e)))
     }
 
     return (

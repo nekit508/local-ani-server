@@ -1,20 +1,21 @@
 "use client"
 
 import {SearchedAnime, search, DataSource} from "@/api/api";
-import {Dispatch, SetStateAction, useState} from "react";
+import {useState} from "react";
 import {waited} from "@/api/core";
 import APIFail from "@/components/APIFail";
-import {rememberState, waitedState} from "@/api/core-client";
+import {rememberState, useWaitedState} from "@/api/core-client";
 import Image from "next/image";
 import Link from "next/link";
 
 export default function ({ sources }: { sources: DataSource[] }) {
     const [searchQuery, setSearchQuery] = useState("")
-    const [list, setList] = waitedState<SearchedAnime[]>()
+    const [list, setList] = useWaitedState<SearchedAnime[]>(null)
     const [source, setSource] = rememberState(useState(""), "name", "", v => sources.includes(v))
 
     const performSearch =  () => {
-        waited(search(source, searchQuery), setList)
+        setList(undefined)
+        waited([search(source, searchQuery), null], setList, () => setList(null))
     }
 
     return (

@@ -1,5 +1,4 @@
 import {RestResponse} from "@/api/types";
-import {Dispatch, SetStateAction} from "react";
 
 function normalizeEndpoint(endpoint: string) {
     return endpoint.replace(/^\/+/, "")
@@ -59,19 +58,20 @@ export function get(endpoint: string, redirectOnUnauthorized: boolean = true) {
 }
 
 /** undefined - loading, value - ok */
-export function waited<T>(promise: Promise<T>, set: Dispatch<SetStateAction<T | null | undefined>>) {
-    set(undefined)
+export function waited<T>([ promise, signal ]: [ promise: Promise<T>, signal: AbortSignal | null ], setData: (data: T) => void, onError: (error: any) => void) {
     promise.then(value => {
-        set(value)
+        if (signal === null || !signal.aborted)
+            setData(value)
     }, error => {
-        throw new Error("Failed to access to API service due to:\n" + JSON.stringify(error))
+        if (signal === null || !signal.aborted)
+            onError(error)
     })
 }
 
 export async function backRequest(endpoint: string, method: string, requestHeaders: Headers, body: BodyInit | null | undefined) {
     if (process.env.BACK_HOST === undefined)
         throw new Error("env variable BACK_HOST is not set")
-    const BACKEND_URL = `${process.env.NODE_ENV === "production" ? "https" : "http"}://${process.env.BACK_HOST}`
+    const BACKEND_URL = `${process.env.NODE_ENV === "production" ? "https" : "http"}://${process.env.BACK_HOST}/back`
 
     const {cookies, headers} = await import("next/headers")
 

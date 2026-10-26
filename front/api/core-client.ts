@@ -3,7 +3,7 @@
 import {RestResponse} from "@/api/types";
 import {Dispatch, SetStateAction, useEffect, useState} from "react";
 
-export function waitedState<T>(def: RestResponse<T> | null = null) {
+export function useWaitedState<T>(def: RestResponse<T> | null = null) {
     return useState<RestResponse<T> | null | undefined>(def)
 }
 
