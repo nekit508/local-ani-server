@@ -19,7 +19,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  allowedDevOrigins: ["192.168.1.191"]
+  allowedDevOrigins: ["ani-cli.com"] // only dev shit
 };
 
 export default nextConfig;

@@ -1,0 +1,17 @@
+services:
+    ani-cli:
+        image: nginx:stable-alpine
+        ports:
+            - "80:80"
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
+        volumes:
+            - ../back/.local:${DOWNLOAD_DIR}:ro # TODO remove after putting services in this container
+            - ./proxy.conf.template:/etc/nginx/templates/default.conf.template:ro
+        environment:
+            ANICLI_HOST: ${ANICLI_HOST}
+            FRONT_PORT: ${FRONT_PORT}
+            BACK_PORT: ${BACK_PORT}
+            LOCALHOST: "host.docker.internal" # TODO remove this and its usages after putting services in this container
+            DOWNLOAD_DIR: ${DOWNLOAD_DIR}
+            NGINX_ENVSUBST_FILTER: "^(ANICLI_HOST|FRONT_PORT|BACK_PORT|DOWNLOAD_DIR|LOCALHOST)$"

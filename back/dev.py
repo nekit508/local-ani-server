@@ -2,5 +2,7 @@ import os
 
 import uvicorn
 
+from back.config import settings
+
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=int(os.environ.get("BACK_PORT", 8000)))
+    uvicorn.run("main:app", host=settings.BACK_HOST, port=settings.BACK_PORT)

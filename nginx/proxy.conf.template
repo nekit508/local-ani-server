@@ -1,0 +1,52 @@
+server {
+    listen 80;
+    server_name ${ANICLI_HOST};
+
+    client_max_body_size 100m;
+
+    # forbid any external api calls - all through internal front proxy (yeah, double proxying)
+    location = /back { return 403; }
+    location /back/ { return 403; }
+
+    location @redirect_to_login {
+        return 302 /login?from=$request_uri;
+    }
+
+    # use this endpoint to internally approve identity
+    location = /videos-auth {
+        internal;
+        proxy_pass http://${LOCALHOST}:${BACK_PORT}/back/auth/verify;
+        proxy_set_header Authorization "Bearer $cookie_auth_token";
+        proxy_set_header X-Original-URI  $request_uri;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+    }
+
+    # videos exposed for authorized users
+    location /videos/ {
+        auth_request /videos-auth;
+        error_page 401 = @redirect_to_login;
+
+        alias ${DOWNLOAD_DIR}/;
+        sendfile on;
+        tcp_nopush on;
+        max_ranges 1;
+        add_header Accept-Ranges bytes always;
+        gzip off;
+    }
+
+    # frontend proxying
+    location / {
+        proxy_pass http://${LOCALHOST}:${FRONT_PORT}/;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 360s;
+    }
+}

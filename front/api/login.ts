@@ -6,5 +6,5 @@ export type Login = {
 }
 
 export function login(data: Login) {
-    return post("/auth/login", data, false)
+    return post("/auth/login", data, false).then(res => res.noResponse())
 }

@@ -15,7 +15,7 @@ export class RestResponse<T> {
         return new RestResponse(this.ok ? mapper(this.body as T) : (this.body as RestError), this.ok)
     }
 
-    public noResponse() {
+    public noResponse(): RestResponse<null> {
         return new RestResponse(this.ok ? null : this.body as RestError, this.ok)
     }
 

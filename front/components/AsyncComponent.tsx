@@ -1,31 +1,44 @@
 "use client"
 
-import {Dispatch, ReactNode, SetStateAction, useEffect, useState} from "react";
+import {ComponentType, Dispatch, SetStateAction, useCallback, useEffect, useRef, useState} from "react";
 import {waited} from "@/api/core";
 
 export default function <T>(
     {
-        promiseAction, initialsAction, onOkayAction, onErrorAction, externalState = undefined, deps = []
+        promiseAction, Initial, OnOkay, OnError, externalState = undefined, deps = []
     } : {
-        promiseAction: () => Promise<T>,
-        initialsAction: () => ReactNode,
-        onOkayAction: (object: T, setter: Dispatch<SetStateAction<T | null | undefined>>, reloader: () => void) => ReactNode,
-        onErrorAction: (reloader: () => void) => ReactNode
-        externalState?: [T | null | undefined, Dispatch<SetStateAction<T | null | undefined>>] | undefined,
+        promiseAction: () => [Promise<T>, AbortController],
+        Initial: ComponentType,
+        OnOkay: ComponentType<{object: T, setter: Dispatch<SetStateAction<T | undefined>>, reloader: () => void}>,
+        OnError: ComponentType<{reloader: () => void, error: any}>
+        externalState?: [T | undefined, Dispatch<SetStateAction<T | undefined>>] | undefined,
         deps?: any[]
     }
 ) {
-    const [state, setState] = externalState === undefined
-        ? useState<T | null | undefined>(undefined)
-        : externalState
+    const [ds, dss] = useState<T | undefined>(undefined)
+    const [state, setState] = externalState === undefined ? [ds, dss] : externalState
     const [reloader, setReloader] = useState<number>(0)
+    const [error, setError] = useState<any>(null)
 
-    const reload = () => setReloader(reloader+1)
+    const actionRef = useRef(promiseAction)
+    const stateRef = useRef(state)
+
+    const reload = useCallback(() => setReloader(prev => prev + 1), [])
 
     useEffect(() => {
-        setState(undefined)
-        waited(promiseAction(), setState)
+        actionRef.current = promiseAction
+        stateRef.current = state
+    });
+
+    useEffect(() => {
+        setError(null)
+        const [promise, controller] = actionRef.current()
+        waited([promise, controller.signal], setState, setError)
+        return () => controller.abort()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [reloader, ...deps]);
 
-    return state === null ? onErrorAction(reload) : state === undefined ? initialsAction() : onOkayAction(state, setState, reload)
+    return error !== null ? <OnError error={error} reloader={reload}/> :
+        state === undefined ? <Initial/> :
+            <OnOkay object={state} setter={setState} reloader={reload}/>
 }

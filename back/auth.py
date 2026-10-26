@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Header
 from fastapi import Depends, Response
 from fastapi.security import OAuth2PasswordBearer
 from jwt import PyJWTError
@@ -13,7 +13,7 @@ from models import User
 from scheme import LoginIn
 from security import decode_token, verify_password, create_token, hash_password
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/back/auth", tags=["auth"])
 auth_token = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 async def get_user_by_login(
@@ -94,23 +94,6 @@ async def logout_all(
     await session.commit()
     return {"ok": True, "cv": user.cv}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+@router.get("/verify")
+def verify(_: User = Depends(get_user)):
+    return { "ok": True }
