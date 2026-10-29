@@ -17,17 +17,16 @@ export default function ({ state }: { state: WorkerState }) {
 
             { task_state !== undefined && <DownloadTaskInfo state={task_state}/> }
 
-            <div>
-                <span className="text-[9px] text-foreground/25">{ `rev ${state.rev}` }</span>
-                <button onClick={e => {
+            <div className="flex flex-row w-full justify-start items-center">
+                <span className="flex-1 text-[9px] text-foreground/25">{ `rev ${state.rev}` }</span>
+                { work_state !== 0 && work_state !== 3 && <button className="btn-primary py-0 px-1" onClick={e => {
                     e.preventDefault()
                     // noinspection JSIgnoredPromiseFromCall
                     workerRestart(state.id)
                 }}>
                    <span className="text-[9px] text-foreground/25"> RESTART </span>
-                </button>
+                </button> }
             </div>
-
         </div>
     )
 }

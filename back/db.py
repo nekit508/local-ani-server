@@ -1,77 +1,54 @@
-from typing import TYPE_CHECKING, Any, AsyncGenerator
+from typing import TYPE_CHECKING
 
-from misc import single_call
+from back.config import settings
 
 if TYPE_CHECKING:
-    from typing import Any, AsyncGenerator, TYPE_CHECKING, Callable
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from typing import Any, Generator
+    from sqlalchemy.orm import Session
 
-# noinspection PyTypeChecker
-_get_session: "Callable[[], AsyncGenerator[AsyncSession, Any]]" = None
-# noinspection PyTypeChecker
-_lifespan: "Callable[[Any], Any]" = None
+from contextlib import contextmanager
 
-@single_call
-def init(file: str = ".db"):
-    global _get_session, _lifespan
+from sqlalchemy import event
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-    from contextlib import asynccontextmanager
+from models import Base
 
-    from sqlalchemy import event
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+engine = create_engine(f"sqlite:///./{settings.DB_FILE}", echo=False, future=True, connect_args={"check_same_thread": False})
 
-    from models import Base
-
-    engine = create_async_engine(f"sqlite+aiosqlite:///./{file}", echo=False, future=True)
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, _connection_record):
-        cur = dbapi_conn.cursor()
-        cur.execute("PRAGMA journal_mode=WAL")
-        cur.execute("PRAGMA synchronous=NORMAL")
-        cur.execute("PRAGMA foreign_keys=ON")
-        cur.execute("PRAGMA busy_timeout=5000")
-        cur.close()
+session_factory = sessionmaker(
+    engine,
+    expire_on_commit=False,
+    autoflush=False
+)
 
 
-    session_factory = async_sessionmaker(
-        engine,
-        expire_on_commit=False,
-        autoflush=False,
-    )
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragma(dbapi_conn, _connection_record):
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA synchronous=NORMAL")
+    cur.execute("PRAGMA foreign_keys=ON")
+    cur.execute("PRAGMA busy_timeout=5000")
+    cur.close()
 
 
-    async def get_session_internal() -> "AsyncGenerator[AsyncSession, Any]":
-        async with session_factory() as session:
-            try:
-                yield session
-            except Exception:
-                await session.rollback()
-                raise
-
-    async def init() -> None:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+def get_session() -> "Generator[Session, Any]":
+    with session_factory() as s:
+        try:
+            yield s
+        except Exception:
+            s.rollback()
+            raise
 
 
-    async def close() -> None:
-        await engine.dispose()
+@contextmanager
+def get_session_cm():
+    yield from get_session()
 
 
-    @asynccontextmanager
-    async def lifespan_internal(app):
-        await init()
-        yield
-        await close()
-
-
-    _get_session, _lifespan = get_session_internal, lifespan_internal
-
+@contextmanager
 def lifespan(app):
-    # noinspection PyCallingNonCallable
-    return _lifespan(app)
-
-async def get_session() -> "AsyncGenerator[AsyncSession, Any]":
-    # noinspection PyCallingNonCallable
-    async for session in _get_session():
-        yield session
+    Base.metadata.create_all(engine)
+    yield
+    engine.dispose()

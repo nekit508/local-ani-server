@@ -30,3 +30,8 @@ class User(Base):
         DateTime, default=datetime.datetime.utcnow
     )
 
+class TitleRecord(Base):
+    __tablename__ = "title_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(index=True)

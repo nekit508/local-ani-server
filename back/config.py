@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     BACK_HOST: str
     BACK_PORT: int
 
+    DB_FILE: str = ".db"
+
 
 try:
     # noinspection PyArgumentList

@@ -1,45 +1,45 @@
 import json
 
-from fastapi import APIRouter, HTTPException, Body, Header
+from fastapi import APIRouter, HTTPException, Body
 from fastapi import Depends, Response
 from fastapi.security import OAuth2PasswordBearer
 from jwt import PyJWTError
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from starlette import status
 
 from db import get_session
 from models import User
 from scheme import LoginIn
-from security import decode_token, verify_password, create_token, hash_password
+from security import decode_token, verify_password, create_token
 
 router = APIRouter(prefix="/back/auth", tags=["auth"])
 auth_token = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-async def get_user_by_login(
+def get_user_by_login(
         login: str,
-        session: AsyncSession
+        session: Session
 ) -> User | None:
-    return (await session.execute(select(User).where(User.login == login))).scalar_one_or_none()
+    return session.execute(select(User).where(User.login == login)).scalar_one_or_none()
 
 
-async def get_user_by_id(
+def get_user_by_id(
         uid: int,
-        session: AsyncSession
+        session: Session
 ) -> User | None:
-    return await session.get(User, uid)
+    return session.get(User, uid)
 
 
-async def get_user(
+def get_user(
         token: str = Depends(auth_token),
-        session: AsyncSession = Depends(get_session)
+        session: Session = Depends(get_session)
 ) -> User:
     try:
         payload = decode_token(token)
         uid = int(payload["sub"])
         cv = int(payload["cv"])
 
-        user = await get_user_by_id(uid, session)
+        user = get_user_by_id(uid, session)
 
         if user is None or user.cv != cv:
             raise ValueError
@@ -54,12 +54,12 @@ async def get_user(
         )
 
 @router.post("/login")
-async def login(
+def login(
         response: Response,
         body: LoginIn = Body(),
-        session: AsyncSession = Depends(get_session)
+        session: Session = Depends(get_session)
 ):
-    user = await get_user_by_login(body.login, session)
+    user = get_user_by_login(body.login, session)
 
     if user is None:
         verify_password()
@@ -81,17 +81,17 @@ async def login(
 
 
 @router.get("/me")
-async def me(user: User = Depends(get_user)):
+def me(user: User = Depends(get_user)):
     return {"id": user.id, "login": user.login, "cv": user.cv}
 
 
 @router.post("/logout-all")
-async def logout_all(
+def logout_all(
     user: User = Depends(get_user),
-    session: AsyncSession = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     user.cv += 1
-    await session.commit()
+    session.commit()
     return {"ok": True, "cv": user.cv}
 
 @router.get("/verify")

@@ -4,7 +4,7 @@ server {
 
     client_max_body_size 100m;
 
-    # forbid any external api calls - all through internal front proxy (yeah, double proxying)
+    # forbid backend - api call are exposed only through internal front proxy (yeah, double proxying)
     location = /back { return 403; }
     location /back/ { return 403; }
 
@@ -12,7 +12,7 @@ server {
         return 302 /login?from=$request_uri;
     }
 
-    # use this endpoint to internally approve identity
+    # using this endpoint to internally approve identity
     location = /videos-auth {
         internal;
         proxy_pass http://${LOCALHOST}:${BACK_PORT}/back/auth/verify;
@@ -22,7 +22,7 @@ server {
         proxy_set_header Content-Length "";
     }
 
-    # videos exposed for authorized users
+    # videos are exposed for authorized users
     location /videos/ {
         auth_request /videos-auth;
         error_page 401 = @redirect_to_login;
@@ -35,7 +35,7 @@ server {
         gzip off;
     }
 
-    # frontend proxying
+    # frontend is publically exposed
     location / {
         proxy_pass http://${LOCALHOST}:${FRONT_PORT}/;
         proxy_http_version 1.1;
