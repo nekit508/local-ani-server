@@ -1,11 +1,12 @@
 import importlib
 import pkgutil
 from enum import Enum
-from threading import RLock
+from functools import lru_cache
+from typing import Sequence
 
 import anicli_api.player
 import anicli_api.source as sources_pkg
-from anicli_api.base import BaseExtractor, BaseAnime, BaseSource
+from anicli_api.base import BaseExtractor, BaseAnime, BaseSource, BaseEpisode
 from anicli_api.player.base import Video, BaseVideoExtractor, ABCVideoExtractor
 from httpx import Timeout
 from yt_dlp.utils import sanitize_path
@@ -49,7 +50,6 @@ class VideoURLProvider:
     q_policy: QualityPolicy
 
     _possible_qualities: list[int] = [144, 240, 360, 480, 720, 1080, 2160]
-    _lock: RLock = RLock()
 
     def __init__(self, title: str, source_title: str, ordinal: int, source: BaseSource, q_target: TargetQuality, q_policy: QualityPolicy):
         self.title = title
@@ -58,10 +58,6 @@ class VideoURLProvider:
         self.source = source
         self.q_target = q_target
         self.q_policy = q_policy
-
-    def __call__(self, *args, **kwargs) -> Video|None:
-        with self._lock:
-            return self._select_quality(list(self.source.get_videos()), self.q_target, self.q_policy)
 
     def _select_quality(self, videos: list[Video], target: TargetQuality, policy: QualityPolicy) -> Video|None:
         ind = self._possible_qualities.index(target)
@@ -73,6 +69,8 @@ class VideoURLProvider:
                     return video
 
         return None
+
+    __call__ = _select_quality
 
 
 class CLI:
@@ -106,12 +104,14 @@ class CLI:
         self.video_extractors = {decoder.__name__.lower(): decoder() for decoder in anicli_api.player.ALL_DECODERS}
         self.video_extractors_names = set(self.video_extractors.keys())
 
+    @lru_cache
     def search(self, extractor: str, query: str) -> list[BaseAnime]:
         if extractor not in self.extractors_names:
             raise UnknownExtractor(extractor)
 
         return list(s.get_anime() for s in self.extractors[extractor].search(query))
 
+    @lru_cache
     def search_exact(self, extractor: str, query: str) -> BaseAnime|None:
         _ = self.search(extractor, query)
         for a in _:
@@ -126,7 +126,11 @@ class CLI:
         if anime is None:
             return None
 
-        anime_episodes = anime.get_episodes()
+        anime_episodes = self._get_episodes(anime)
 
         return list((episode_ord, VideoURLProvider(sanitize_path(title), sanitize_path(source_title), episode_ord, source, q_target, q_policy))
                     for episode_ord in episodes_ords for source in anime_episodes[episode_ord-1].get_sources() if source.title == source_title)
+
+    @lru_cache
+    def _get_episodes(self, anime: BaseAnime) -> Sequence[BaseEpisode]:
+        return anime.get_episodes()
