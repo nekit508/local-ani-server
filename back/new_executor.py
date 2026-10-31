@@ -1,11 +1,9 @@
 import time
-from cmath import phase
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from queue import Queue, Empty
 from threading import Condition, RLock, Thread
-from time import sleep
 from typing import Callable, Any, Generator
 
 class MCMPManager:
@@ -277,7 +275,25 @@ class State[T]:
             self.commit()
 
 
+class TaskState(State["Task"]):
+    info: str
+    error: Exception|None
+
+    _transfer_to_snapshot_fields = State._transfer_to_snapshot_fields.copy()
+    _transfer_to_snapshot_fields.extend(())
+
+    def __init__(self, executor: "Executor"):
+        super().__init__(executor.workers_states)
+        self.info = ""
+        self.error = None
+
+    def __repr__(self):
+        return self.info
+
+
 class Task:
+    _state: TaskState
+
     def __init__(self):
         pass
 
@@ -293,9 +309,13 @@ class Task:
     def finished(self):
         pass
 
+    def _info(self, info: str):
+        with self._state.write:
+            self._state.info = info
+
 
 @dataclass
-class PhaseDesc:
+class WorkerPhaseDesc:
     phase_name: str
     """
     Just a name
@@ -318,7 +338,7 @@ class PhaseDesc:
     """
 
 
-class Phase(PhaseDesc, Enum):
+class WorkerPhase(WorkerPhaseDesc, Enum):
     DISABLED = ("disabled", False, False, False, False) # thread is dead - not started yet
     STARTING = ("starting", True, False, False, False) # started, but still not in loop
     PROCESSING_COMMANDS = ("processing commands", True, True, False, False) # processing async commands
@@ -333,16 +353,23 @@ class Phase(PhaseDesc, Enum):
 
 
 class WorkerState(State["Worker"]):
-    phase: Phase
+    phase: WorkerPhase
     pending_stop: bool
+    error: Exception|None
+    """
+    Last exception raised inside the thread loop and outside of the task execution
+    
+    Valid only if phase if ERROR
+    """
 
     _transfer_to_snapshot_fields = State._transfer_to_snapshot_fields.copy()
     _transfer_to_snapshot_fields.extend(("phase", "pending_stop"))
 
     def __init__(self, states: MCMPValue[dict[int, State]]):
         super().__init__(states)
-        self.phase = Phase.DISABLED
+        self.phase = WorkerPhase.DISABLED
         self.pending_stop = False
+        self.error = None
 
     def __repr__(self):
         return self.phase.phase_name
@@ -358,7 +385,7 @@ class Worker:
     _state: WorkerState
     _thread: Thread|None
     _executor: "Executor"
-    _next_phase_actions: dict[Phase, list[Callable]]
+    _next_phase_actions: dict[WorkerPhase, list[Callable]]
 
     @staticmethod
     def STOP(worker: "Worker"):
@@ -366,7 +393,7 @@ class Worker:
             worker._state.pending_stop = True
 
     @staticmethod
-    def ON_PHASE(phase: Phase, action: Callable) -> Callable:
+    def ON_PHASE(phase: WorkerPhase, action: Callable) -> Callable:
         return lambda w: w.on_next_phase(phase, action)
 
     def __init__(self, executor: "Executor"):
@@ -378,7 +405,12 @@ class Worker:
         self._next_phase_actions = {}
         self._state.owner = self
 
-    def _phase(self, phase: Phase):
+    @property
+    def _phase(self):
+        return self._state.phase
+
+    @_phase.setter
+    def _phase(self, phase: WorkerPhase):
         with self._state.write:
             self._state.phase = phase
         if phase in self._next_phase_actions:
@@ -388,11 +420,11 @@ class Worker:
                 action(self)
 
     def start(self):
-        self._phase(Phase.STARTING)
+        self._phase = WorkerPhase.STARTING
         self._thread = Thread(target=self._run)
         self._thread.start()
 
-    def on_next_phase(self, phase: Phase, action: Callable):
+    def on_next_phase(self, phase: WorkerPhase, action: Callable):
         if phase not in self._next_phase_actions:
             self._next_phase_actions[phase] = []
         self._next_phase_actions[phase].append(action)
@@ -411,10 +443,10 @@ class Worker:
                 return False
 
             if self._actions_queue.need():
-                self._phase(Phase.PROCESSING_COMMANDS)
+                self._phase = WorkerPhase.PROCESSING_COMMANDS
                 self._process_commands()
 
-            self._phase(Phase.IDLE)
+            self._phase = WorkerPhase.IDLE
             task = self._executor.get_task(timeout=1)
 
             if task is not None:
@@ -423,7 +455,7 @@ class Worker:
         if self._state.pending_stop:
             return False
 
-        self._phase(Phase.ACTIVE)
+        self._phase = WorkerPhase.ACTIVE
         try:
             # noinspection PyUnboundLocalVariable
             task.execute(self)
@@ -432,15 +464,15 @@ class Worker:
         else:
             task.finished()
         finally:
-            self._phase(Phase.WORKING)
+            self._phase = WorkerPhase.WORKING
 
         return not self._state.pending_stop
 
     def _stopped(self):
-        self._phase(Phase.STOPPED)
+        self._phase = WorkerPhase.STOPPED
 
     def _failed(self):
-        self._phase(Phase.FAILED)
+        self._phase = WorkerPhase.FAILED
 
     # noinspection PyBroadException
     def _run(self):
