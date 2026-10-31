@@ -6,8 +6,6 @@ from queue import Queue, Empty
 from threading import Condition, RLock, Thread
 from typing import Callable, Any, Generator
 
-# phase related future actions
-
 class MCMPManager:
     """
     Multiple consumer multiple producer manager, that provides persistent read/write operations,
@@ -27,8 +25,10 @@ class MCMPManager:
     def __init__(self):
         self._readings = 0
         self._writings = 0
+        self._lock = False
         self._reading_cond = Condition()
         self._writing_cond = Condition()
+        self._lock_cond = Condition()
 
     @property
     @contextmanager
@@ -94,6 +94,17 @@ class MCMPManager:
             finally:
                 self._lock = False
 
+    @property
+    @contextmanager
+    def unlocked(self):
+        """
+        Starts operation that is locked only by lock operation
+
+        Reentrant
+        """
+        with self._lock_cond:
+            yield
+
 
 class MCMPValue[T]:
     _value: T
@@ -102,6 +113,10 @@ class MCMPValue[T]:
     def __init__(self, value: T, manager: MCMPManager):
         self._value = value
         self._manager = manager
+
+    @property
+    def manager(self):
+        return self._manager
 
     @property
     @contextmanager
@@ -126,16 +141,29 @@ class MCMPValue[T]:
             yield self._value
 
     @property
+    @contextmanager
     def lock(self):
         """
-        Use this if you want to get full access to value
+        Use this if you want to get full access to the value
 
         NOT Reentrant
         """
-        return self._manager.lock
+        with self._manager.lock:
+            yield self._value
+
+    @property
+    @contextmanager
+    def unlocked(self) -> Generator[T, Any, None]:
+        """
+        Use this if you want to do something irrelevant to data
+
+        Reentrant
+        """
+        with self._manager.unlocked:
+            yield self._value
 
 
-class CommandsQueue:
+class MPSCQueue:
     _lock: RLock
     _commands: list[Callable]
 
@@ -150,19 +178,15 @@ class CommandsQueue:
     def dump(self) -> Generator[Callable, Any, None]:
         with self._lock:
             while len(self._commands):
-                try:
-                    yield self._commands.pop(0)
-                finally:
-                    break
+                yield self._commands.pop(0)
 
     def need(self) -> bool:
         with self._lock:
             return len(self._commands) > 0
 
 
-class StateSnapshot:
-    rev: int
-    _data: dict[str, Any]
+class Data:
+    _data: dict[str, Any] = {}
 
     def __getattr__(self, item: str):
         return self._data[item] if item in self._data else None
@@ -174,29 +198,72 @@ class StateSnapshot:
         del self._data[key]
 
 
-class State:
+class StateSnapshot:
+    rev: int
+    id: int
+    _data: Data
+
+    def __init__(self, id_: int):
+        self.id = id_
+        self.rev = 0
+        self._data = Data()
+
+    @property
+    def data(self):
+        return self._data
+
+
+class State[T]:
+    _ID: int = 0
+
     _transfer_to_snapshot_fields: list[str] = []
 
     _rev: int
-    _manager: MCMPManager
+    _id: int
+    _states: MCMPValue[dict[int, State]]
     _snapshot: StateSnapshot
 
-    def __init__(self, manager: MCMPManager):
-        self.rev()
-        self._manager = manager
-        self._snapshot = StateSnapshot()
+    _owner: T
 
-    def rev(self, rev: int | None = None):
+    def __init__(self, states: MCMPValue[dict[int, State]]):
+        self.update_rev()
+        self._states = states
+        self._owner = None
+
+        self._id = State._ID
+        State._ID += 1
+
+        with self._states.lock as s:
+            self._snapshot = StateSnapshot(self._id)
+            self._snapshot.rev = self._rev
+            s[self._id] = self
+
+    def update_rev(self, rev: int | None = None):
         self._rev = int(time.time() * 1000) if rev is None else rev
 
     def _transfer_to_snapshot(self):
+        self._snapshot.rev = self._rev
+        self._snapshot.id = self._id
         for field in self._transfer_to_snapshot_fields:
-            setattr(self._snapshot, field, getattr(self, field))
+            setattr(self._snapshot.data, field, getattr(self, field))
 
     def commit(self):
-        with self._manager.write:
-            self._snapshot.rev = self._rev
+        with self._states.write:
             self._transfer_to_snapshot()
+
+    @property
+    def owner(self) -> T:
+        return self._owner
+
+    @owner.setter
+    def owner(self, owner: T):
+        if self._owner is not None:
+            raise RuntimeError("Owner is already set")
+        self._owner = owner
+
+    @property
+    def id(self):
+        return self._id
 
     @property
     @contextmanager
@@ -204,7 +271,7 @@ class State:
         try:
             yield
         finally:
-            self.rev()
+            self.update_rev()
             self.commit()
 
 
@@ -212,7 +279,10 @@ class Task:
     def __init__(self):
         pass
 
-    def execute(self):
+    def execute(self, worker: "Worker"):
+        self._execute()
+
+    def _execute(self):
         pass
 
     def failed(self, exception: Exception):
@@ -224,7 +294,7 @@ class Task:
 
 @dataclass
 class PhaseDesc:
-    name: str
+    phase_name: str
     """
     Just a name
     """
@@ -246,54 +316,90 @@ class PhaseDesc:
     """
 
 
-class Phase(Enum, PhaseDesc):
-    DISABLED = PhaseDesc("disabled", False, False, False, False) # thread is dead - not started yet
-    STARTING = PhaseDesc("starting", True, False, False, False) # started, but still not in loop
-    PROCESSING_COMMANDS = PhaseDesc("processing commands", True, True, False, False) # processing async commands
-    IDLE = PhaseDesc("waiting", False, True, False, False) # waiting for task
-    WORKING = PhaseDesc("working", True, True, False, False) # doing smth in loop (typically - ended task but not exited loop yet)
-    ACTIVE = PhaseDesc("active", True, True, True, False) # executing task - farther detail in task state
-    FAILED = PhaseDesc("failed", False, False, False, True) # thread is dead - worker level error occurred
-    STOPPED = PhaseDesc("stopped", False, False, False, False) # thread is dead - stopped by on purpose
+class Phase(PhaseDesc, Enum):
+    DISABLED = ("disabled", False, False, False, False) # thread is dead - not started yet
+    STARTING = ("starting", True, False, False, False) # started, but still not in loop
+    PROCESSING_COMMANDS = ("processing commands", True, True, False, False) # processing async commands
+    IDLE = ("waiting", False, True, False, False) # waiting for task
+    WORKING = ("working", True, True, False, False) # doing smth in loop (typically - ended task but not exited loop yet)
+    ACTIVE = ("active", True, True, True, False) # executing task - farther detail in task state
+    FAILED = ("failed", False, False, False, True) # thread is dead - worker level error occurred
+    STOPPED = ("stopped", False, False, False, False) # thread is dead - stopped by on purpose
+
+    def __hash__(self):
+        return self.name.__hash__()
 
 
-class WorkerState(State):
+class WorkerState(State["Worker"]):
     phase: Phase
     pending_stop: bool
 
-    def __init__(self, manager: MCMPManager):
-        super().__init__(manager)
-        self._transfer_to_snapshot_fields.extend(("phase", "pending_stop"))
+    _transfer_to_snapshot_fields = State._transfer_to_snapshot_fields.copy()
+    _transfer_to_snapshot_fields.extend(("phase", "pending_stop"))
+
+    def __init__(self, states: MCMPValue[dict[int, State]]):
+        super().__init__(states)
         self.phase = Phase.DISABLED
         self.pending_stop = False
 
+    def __repr__(self):
+        return self.phase.phase_name
+
+    #__str__ = __repr__
+
 
 class Worker:
-    _commands_queue: CommandsQueue
+    """
+    From outside, you can use only start and submit methods
+    """
+    _actions_queue: MPSCQueue
     _state: WorkerState
     _thread: Thread|None
     _executor: "Executor"
+    _next_phase_actions: dict[Phase, list[Callable]]
+
+    @staticmethod
+    def STOP(worker: "Worker"):
+        with worker._state.write:
+            worker._state.pending_stop = True
+
+    @staticmethod
+    def ON_PHASE(phase: Phase, action: Callable) -> Callable:
+        return lambda w: w.on_next_phase(phase, action)
 
     def __init__(self, executor: "Executor"):
-        self._commands_queue = CommandsQueue()
+        self._actions_queue = MPSCQueue()
         self._executor = executor
-        self._state = WorkerState(executor.mcmp_manager)
+        self._state = WorkerState(executor.workers_states)
+        self._state.commit()
         self._thread = None
+        self._next_phase_actions = {}
+        self._state.owner = self
 
     def _phase(self, phase: Phase):
-        with self._state:
+        with self._state.write:
             self._state.phase = phase
+        if phase in self._next_phase_actions:
+            copy = self._next_phase_actions[phase].copy()
+            self._next_phase_actions[phase].clear()
+            for action in copy:
+                action(self)
 
     def start(self):
         self._phase(Phase.STARTING)
         self._thread = Thread(target=self._run)
         self._thread.start()
 
-    def submit(self, command: Callable):
-        self._commands_queue.push(command)
+    def on_next_phase(self, phase: Phase, action: Callable):
+        if phase not in self._next_phase_actions:
+            self._next_phase_actions[phase] = []
+        self._next_phase_actions[phase].append(action)
+
+    def submit(self, actions: Callable):
+        self._actions_queue.push(actions)
 
     def _process_commands(self):
-        for command in self._commands_queue.dump():
+        for command in self._actions_queue.dump():
             command(self)
 
     # noinspection PyBroadException
@@ -302,7 +408,7 @@ class Worker:
             if self._state.pending_stop:
                 return False
 
-            if self._commands_queue.need():
+            if self._actions_queue.need():
                 self._phase(Phase.PROCESSING_COMMANDS)
                 self._process_commands()
 
@@ -318,7 +424,7 @@ class Worker:
         self._phase(Phase.ACTIVE)
         try:
             # noinspection PyUnboundLocalVariable
-            task.execute()
+            task.execute(self)
         except Exception as e:
             task.failed(e)
         else:
@@ -334,6 +440,7 @@ class Worker:
     def _failed(self):
         self._phase(Phase.FAILED)
 
+    # noinspection PyBroadException
     def _run(self):
         try:
             while self._loop():
@@ -345,23 +452,31 @@ class Worker:
 
 
 class Executor:
-    _mcmp_manager: MCMPManager
-    _queue: Queue[Task]
+    _workers_states: MCMPValue[dict[int, WorkerState]]
+    _tasks_states: MCMPValue[dict[int, State]]
+    _tasks_queue: Queue[Task]
 
     def __init__(self):
-        self._mcmp_manager = MCMPManager()
-        self._queue = Queue()
+        self._workers_states = MCMPValue({}, MCMPManager())
+        self._tasks_states = MCMPValue({}, MCMPManager())
+        self._tasks_queue = Queue()
+
+    def spawn_worker(self) -> Worker:
+        return Worker(self)
+
+    def create_task(self):
+        pass
 
     @property
-    def mcmp_manager(self):
-        return self._mcmp_manager
+    def workers_states(self):
+        return self._workers_states
+
+    @property
+    def mcmp_tasks_states(self):
+        return self._tasks_states
 
     def get_task(self, timeout: int | None = None) -> Task|None:
         try:
-            return self._queue.get(timeout=timeout)
+            return self._tasks_queue.get(timeout=timeout)
         except Empty:
             return None
-
-
-if __name__ == "__main__":
-    pass
