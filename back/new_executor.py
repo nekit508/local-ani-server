@@ -1,12 +1,11 @@
 import time
-from cmath import phase
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from queue import Queue, Empty
 from threading import Condition, RLock, Thread
-from time import sleep
 from typing import Callable, Any, Generator
+
 
 class MCMPManager:
     """
@@ -277,25 +276,64 @@ class State[T]:
             self.commit()
 
 
+class TaskState(State["Task"]):
+    info: str
+    error: Exception | None
+    working: bool
+    worker: int
+
+    _transfer_to_snapshot_fields = State._transfer_to_snapshot_fields.copy()
+    _transfer_to_snapshot_fields.extend(("info", "error", "working", "worker"))
+
+    def __init__(self, states: MCMPValue[dict[int, State]]):
+        super().__init__(states)
+        self.info = ""
+        self.error = None
+        self.working = False
+
+    def __repr__(self):
+        return self.info
+
+
 class Task:
-    def __init__(self):
-        pass
+    _state: TaskState
+
+    def __init__(self, executor: "Executor"):
+        self._state = TaskState(executor.workers_states)
 
     def execute(self, worker: "Worker"):
+        with self._state.write:
+            self._state.working = True
+            self._state.error = None
+            self._state.worker = worker.id
+            self._state.info = ""
         self._execute()
 
     def _execute(self):
         pass
 
     def failed(self, exception: Exception):
-        pass
+        with self._state.write:
+            self._state.working = False
+            self._state.error = exception
+            self._state.info = ""
 
     def finished(self):
-        pass
+        with self._state.write:
+            self._state.working = False
+            self._state.info = ""
+
+    def _info(self, info: str):
+        with self._state.write:
+            self._state.info = info
+
+    @property
+    def id(self):
+        return self._state.id
 
 
 @dataclass
-class PhaseDesc:
+class WorkerPhaseDesc:
     phase_name: str
     """
     Just a name
@@ -318,36 +356,42 @@ class PhaseDesc:
     """
 
 
-class Phase(PhaseDesc, Enum):
-    DISABLED = ("disabled", False, False, False, False) # thread is dead - not started yet
-    STARTING = ("starting", True, False, False, False) # started, but still not in loop
-    PROCESSING_COMMANDS = ("processing commands", True, True, False, False) # processing async commands
-    IDLE = ("waiting", False, True, False, False) # waiting for task
-    WORKING = ("working", True, True, False, False) # doing smth in loop (typically - ended task but not exited loop yet)
-    ACTIVE = ("active", True, True, True, False) # executing task - farther detail in task state
-    FAILED = ("failed", False, False, False, True) # thread is dead - worker level error occurred
-    STOPPED = ("stopped", False, False, False, False) # thread is dead - stopped by on purpose
+class WorkerPhase(WorkerPhaseDesc, Enum):
+    DISABLED = ("disabled", False, False, False, False)  # thread is dead - not started yet
+    STARTING = ("starting", True, False, False, False)  # started, but still not in loop
+    PROCESSING_COMMANDS = ("processing commands", True, True, False, False)  # processing async commands
+    IDLE = ("waiting", False, True, False, False)  # waiting for task
+    WORKING = ("working", True, True, False,
+               False)  # doing smth in loop (typically - ended task but not exited loop yet)
+    ACTIVE = ("active", True, True, True, False)  # executing task - farther detail in task state
+    FAILED = ("failed", False, False, False, True)  # thread is dead - worker level error occurred
+    STOPPED = ("stopped", False, False, False, False)  # thread is dead - stopped by on purpose
 
     def __hash__(self):
         return self.name.__hash__()
 
 
 class WorkerState(State["Worker"]):
-    phase: Phase
+    phase: WorkerPhase
     pending_stop: bool
+    error: Exception | None
+    """
+    Last exception raised inside the thread loop and outside of the task execution
+
+    Valid only if phase if ERROR
+    """
 
     _transfer_to_snapshot_fields = State._transfer_to_snapshot_fields.copy()
     _transfer_to_snapshot_fields.extend(("phase", "pending_stop"))
 
     def __init__(self, states: MCMPValue[dict[int, State]]):
         super().__init__(states)
-        self.phase = Phase.DISABLED
+        self.phase = WorkerPhase.DISABLED
         self.pending_stop = False
+        self.error = None
 
     def __repr__(self):
         return self.phase.phase_name
-
-    #__str__ = __repr__
 
 
 class Worker:
@@ -356,9 +400,9 @@ class Worker:
     """
     _actions_queue: MPSCQueue
     _state: WorkerState
-    _thread: Thread|None
+    _thread: Thread | None
     _executor: "Executor"
-    _next_phase_actions: dict[Phase, list[Callable]]
+    _next_phase_actions: dict[WorkerPhase, list[Callable]]
 
     @staticmethod
     def STOP(worker: "Worker"):
@@ -366,7 +410,7 @@ class Worker:
             worker._state.pending_stop = True
 
     @staticmethod
-    def ON_PHASE(phase: Phase, action: Callable) -> Callable:
+    def ON_PHASE(phase: WorkerPhase, action: Callable) -> Callable:
         return lambda w: w.on_next_phase(phase, action)
 
     def __init__(self, executor: "Executor"):
@@ -378,7 +422,16 @@ class Worker:
         self._next_phase_actions = {}
         self._state.owner = self
 
-    def _phase(self, phase: Phase):
+    @property
+    def id(self):
+        return self._state.id
+
+    @property
+    def _phase(self):
+        return self._state.phase
+
+    @_phase.setter
+    def _phase(self, phase: WorkerPhase):
         with self._state.write:
             self._state.phase = phase
         if phase in self._next_phase_actions:
@@ -388,11 +441,11 @@ class Worker:
                 action(self)
 
     def start(self):
-        self._phase(Phase.STARTING)
+        self._phase = WorkerPhase.STARTING
         self._thread = Thread(target=self._run)
         self._thread.start()
 
-    def on_next_phase(self, phase: Phase, action: Callable):
+    def on_next_phase(self, phase: WorkerPhase, action: Callable):
         if phase not in self._next_phase_actions:
             self._next_phase_actions[phase] = []
         self._next_phase_actions[phase].append(action)
@@ -411,10 +464,10 @@ class Worker:
                 return False
 
             if self._actions_queue.need():
-                self._phase(Phase.PROCESSING_COMMANDS)
+                self._phase = WorkerPhase.PROCESSING_COMMANDS
                 self._process_commands()
 
-            self._phase(Phase.IDLE)
+            self._phase = WorkerPhase.IDLE
             task = self._executor.get_task(timeout=1)
 
             if task is not None:
@@ -423,7 +476,7 @@ class Worker:
         if self._state.pending_stop:
             return False
 
-        self._phase(Phase.ACTIVE)
+        self._phase = WorkerPhase.ACTIVE
         try:
             # noinspection PyUnboundLocalVariable
             task.execute(self)
@@ -432,15 +485,15 @@ class Worker:
         else:
             task.finished()
         finally:
-            self._phase(Phase.WORKING)
+            self._phase = WorkerPhase.WORKING
 
         return not self._state.pending_stop
 
     def _stopped(self):
-        self._phase(Phase.STOPPED)
+        self._phase = WorkerPhase.STOPPED
 
     def _failed(self):
-        self._phase(Phase.FAILED)
+        self._phase = WorkerPhase.FAILED
 
     # noinspection PyBroadException
     def _run(self):
@@ -466,8 +519,8 @@ class Executor:
     def spawn_worker(self) -> Worker:
         return Worker(self)
 
-    def create_task(self):
-        pass
+    def create_task[T](self, task_type: T, *args, **kwargs) -> T:
+        return task_type(self, *args, **kwargs)
 
     @property
     def workers_states(self):
@@ -477,7 +530,7 @@ class Executor:
     def mcmp_tasks_states(self):
         return self._tasks_states
 
-    def get_task(self, timeout: int | None = None) -> Task|None:
+    def get_task(self, timeout: int | None = None) -> Task | None:
         try:
             return self._tasks_queue.get(timeout=timeout)
         except Empty:
