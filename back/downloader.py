@@ -3,7 +3,7 @@ from typing import Any
 
 import yt_dlp
 
-from back.cli import VideoURLProvider, TargetQuality, QualityPolicy
+from back.cli import VideoURLPromise, TargetQuality, QualityPolicy
 from back.config import settings
 from back.executor import TaskState, Task
 
@@ -41,11 +41,11 @@ class NoAppropriateQuality(Exception):
 
 class DownloadTaskState(TaskState):
     progress: float
-    _prov: "VideoURLProvider"
+    _prov: "VideoURLPromise"
     state: str
     quality: int | None
 
-    def __init__(self, prov: "VideoURLProvider"):
+    def __init__(self, prov: "VideoURLPromise"):
         super().__init__()
         self.progress = 0
         self._prov = prov
@@ -83,7 +83,7 @@ class DownloadTaskState(TaskState):
 
 
 class DownloadTask(Task[DownloadTaskState]):
-    def __init__(self, prov: "VideoURLProvider"):
+    def __init__(self, prov: "VideoURLPromise"):
         super().__init__(DownloadTaskState(prov))
 
     def execute(self):

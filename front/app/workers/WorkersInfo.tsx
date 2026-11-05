@@ -1,7 +1,7 @@
 "use client"
 
 import {waited} from "@/api/core";
-import {bucket, WorkerState} from "@/api/api";
+import {workers, WorkerState} from "@/api/api";
 import {useEffect, useReducer, useRef, useState} from "react";
 import WorkerInfo from "@/app/workers/WorkerInfo";
 
@@ -24,7 +24,7 @@ export default function () {
         const loop = () => {
             const since = revRef.current
             revRef.current = Date.now()
-            waited([bucket<WorkerState>("worker", since), abortRef.current.signal], res => {
+            waited([workers(since), abortRef.current.signal], res => {
                 setReq(res.ok)
                 if (!res.ok)
                     return
@@ -34,7 +34,7 @@ export default function () {
 
                     const map = statesRef.current
                     for (let state of states) {
-                        if (state.soft_deleted)
+                        if (state.soft_delete)
                             map.delete(state.id)
                         else map.set(state.id, state)
                     }

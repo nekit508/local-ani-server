@@ -1,9 +1,11 @@
+"use client"
+
 import {useEffect, useReducer, useRef, useState} from "react";
-import {bucket, DownloadTaskState} from "@/api/api";
+import {DownloadTaskState, tasks} from "@/api/api";
 import {waited} from "@/api/core";
 import DownloadTaskInfo from "@/app/workers/DownloadTaskInfo";
 
-export default function ({ title } : { title: string }) {
+export default function () {
     const [req, setReq] = useState<boolean | undefined>(true)
     const revRef = useRef<number>(0)
     const statesRef = useRef(new Map<number, DownloadTaskState>())
@@ -22,7 +24,7 @@ export default function ({ title } : { title: string }) {
         const loop = () => {
             const since = revRef.current
             revRef.current = Date.now()
-            waited([bucket<DownloadTaskState>(`task/${title}`, since), abortRef.current.signal], res => {
+            waited([tasks(since), abortRef.current.signal], res => {
                 setReq(res.ok)
                 if (!res.ok)
                     return
@@ -32,7 +34,7 @@ export default function ({ title } : { title: string }) {
 
                     const map = statesRef.current
                     for (let state of states) {
-                        if (state.soft_deleted)
+                        if (state.soft_delete)
                             map.delete(state.id)
                         else map.set(state.id, state)
                     }

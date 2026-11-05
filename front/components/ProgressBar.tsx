@@ -3,11 +3,13 @@ export default function ProgressBar({
     outerStyle = "",
     innerStyle = "",
     textStyle = "",
+    text = ""
 }: {
     progress: number;
     outerStyle?: string;
     innerStyle?: string;
     textStyle?: string;
+    text?: string;
 }) {
     const percent = Math.min(100, Math.max(0, progress * 100));
 
@@ -18,7 +20,7 @@ export default function ProgressBar({
                 style={{ width: `${percent}%` }}
             />
             <span className={`absolute inset-0 flex items-center justify-center text-xs ${textStyle}`}>
-                {percent.toFixed(0)}%
+                {`${percent.toFixed(0)} % ${text}`}
             </span>
         </div>
     );

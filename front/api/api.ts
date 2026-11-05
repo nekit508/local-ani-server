@@ -23,34 +23,36 @@ export type AnimeInfo = {
     episodes: Episode[]
 }
 
-export type State = {
-    _type: string
-    id: number
+export type State<Dict> = {
     rev: number
-    soft_deleted: boolean
+    id: number
+    data: Dict
+    soft_delete: boolean
 }
 
-export type TaskState = State & {
-    worker: number,
+export type WorkerPhase = {
+    "phase_name": "DISABLED" | "STARTING" | "PROCESSING_COMMANDS" | "IDLE" | "WORKING" | "ACTIVE" | "FAILED" | "STOPPED"
+    "working": boolean
+    "alive": boolean
+    "active": boolean
+    "error": boolean
+}
+
+export type WorkerState = State<{
+    phase: WorkerPhase
+    pending_stop: boolean
     error: string
-}
+}>;
 
-export type DownloadTaskState = TaskState & {
-    state: string
-    quality: number
-    title: string
-    source_title: string
-    ordinal: number
-    progress: number
-}
-
-export type WorkerState = State & {
-    current_task_id: number
-    current_task?: TaskState
-    error: string
-    bad_error: string
+export type DownloadTaskState = State<{
+    error: string|undefined
     working: boolean
-}
+    speed: string
+    progress: number
+    output_file: string
+    name: string
+    output_format: string
+}>;
 
 export type TargetQuality = 144 | 240 | 360 | 480 | 720| 1080 | 2160
 export type QualityPolicy = "<" | ">"
@@ -80,10 +82,18 @@ export function download(body: {
     return post("/api/download", body).then(res => res.map(b => b as number[]))
 }
 
-export function bucket<T extends State>(name: string, since: number = 0) {
-    return get(`/api/bucket?name=${name}&since=${since}`).then(res => res.map(b => b as T[]))
+export function tasks(since: number = 0) {
+    return get(`/api/tasks?&since=${since}`).then(res => res.map(b => b as DownloadTaskState[]))
 }
 
-export function workerRestart(id: number) {
-    return get(`/api/worker/restart?id=${id}`).then(res => res.noResponse())
+export function workers(since: number = 0) {
+    return get(`/api/workers?&since=${since}`).then(res => res.map(b => b as WorkerState[]))
+}
+
+export function startWorker(wid: number) {
+    return get(`/api/worker/${wid}/start`).then(res => res.noResponse())
+}
+
+export function stopWorker(wid: number) {
+    return get(`/api/worker/${wid}/stop`).then(res => res.noResponse())
 }

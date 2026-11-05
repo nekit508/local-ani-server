@@ -1,13 +1,14 @@
-from typing import Any
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from starlette import status
 from starlette.responses import Response
 
-import auth, cli
+import auth
+import cli
 from back.config import settings
-from back.downloader import DownloadTask
-from back.executor import Executor, WorkerState
+from back.new_downloader import DownloadTask
+from back.new_executor import Executor, StateSnapshot, WorkerState, WorkerPhase, Worker
 from back.scheme import ApiDownloadIn
 from misc import select
 
@@ -15,12 +16,14 @@ router = APIRouter(prefix="/back/api", tags=["api"], dependencies=[Depends(auth.
 _cli = cli.CLI()
 
 _executor = Executor()
-for _ in range(settings.WORKERS_NUM):
-    _executor.start_worker()
+for _ in range(settings.EXECUTOR_WORKERS_NUM):
+    _executor.spawn_worker()#.start()
+
 
 @router.get("/data_sources")
 def _data_sources() -> list[str]:
     return list(_cli.extractors_names)
+
 
 @router.get("/search")
 def _search(
@@ -34,6 +37,7 @@ def _search(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"invalid source {e.extractor}"
         )
+
 
 @router.get("/anime")
 def _anime(
@@ -63,6 +67,7 @@ def _anime(
             detail=f"invalid source {e.extractor}"
         )
 
+
 @router.post("/download")
 def _download(
         body: ApiDownloadIn = Body()
@@ -80,7 +85,12 @@ def _download(
 
         for ordinal, prov in providers:
             failed.remove(ordinal)
-            _executor.submit(DownloadTask(prov))
+            _executor.submit_task(DownloadTask(
+                _executor,
+                f"{body.title} - {body.source_title} Ep. {ordinal}",
+                prov,
+                Path(Path(settings.DOWNLOAD_DIR) / body.title / body.source_title / str(ordinal))
+            ))
 
         return failed
     except cli.UnknownExtractor as e:
@@ -90,41 +100,66 @@ def _download(
         )
 
 
-@router.get("/bucket")
-def _bucket(
-        name: str = Query(),
+@router.get("/tasks")
+def _tasks(
         since: int = Query(0)
 ):
-    with _executor.shared_index:
-        bucket = _executor.shared_index[name]
+    with _executor.tasks_states.read as snapshots:
+        snapshots: dict[int, StateSnapshot]
+        return list(state.dict for state in snapshots.values() if state.rev >= since)
 
-        if bucket is None:
+
+@router.get("/workers")
+def _workers(
+        since: int = Query(0)
+):
+    with _executor.workers_states.read as snapshots:
+        snapshots: dict[int, StateSnapshot]
+        return list(state.dict for state in snapshots.values() if state.rev >= since)
+
+@router.get("/worker/{wid}/start")
+def _start_worker(
+        wid: int
+):
+    with _executor.workers_states.read as snapshots:
+        snapshots: dict[int, StateSnapshot[WorkerState]]
+        if wid not in snapshots:
             return HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"invalid bucket {name}"
+                detail=f"Invalid worker id {wid}"
             )
-        
-        states: list[dict[str, Any]] = []
-        for state in bucket:
-            with state:
-                if state.rev() >= since:
-                    states.append(state.serialise())
 
-    return states
+        snapshot = snapshots[wid]
+        if snapshot.state.phase.working or snapshot.state.phase.alive:
+            return HTTPException(
+                status_code=status.HTTP_406_NOT_ACCEPTABLE,
+                detail=f"Worker already running"
+            )
 
-@router.get("/worker/restart")
-def _worker_restart(
-        _id: int = Query(alias="id")
+    snapshot.state.owner.start()
+
+    return Response(status_code=200)
+
+
+@router.get("/worker/{wid}/stop")
+def _stop_worker(
+        wid: int
 ):
-    state = _executor.shared_index[_id]
+    with _executor.workers_states.read as snapshots:
+        snapshots: dict[int, StateSnapshot[WorkerState]]
+        if wid not in snapshots:
+            return HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Invalid worker id {wid}"
+            )
 
-    if state is None or not isinstance(state, WorkerState):
-        return Response(status_code=404)
+        snapshot = snapshots[wid]
+        if not (snapshot.state.phase.working or snapshot.state.phase.alive):
+            return HTTPException(
+                status_code=status.HTTP_406_NOT_ACCEPTABLE,
+                detail=f"Worker is not running"
+            )
 
-    w_state: WorkerState = state
-    with w_state:
-        if w_state.working:
-            return Response(status_code=406)
-        w_state.start()
+    snapshot.state.owner.submit(Worker.STOP)
 
     return Response(status_code=200)

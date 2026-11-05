@@ -8,7 +8,6 @@ class Settings(BaseSettings):
     JWT_ALG: str = "HS256"
     JWT_TOKEN_LIFETIME: int = 86400
     DOWNLOAD_DIR: str = "."
-    WORKERS_NUM: int = 4
     FRAGMENTS_PARALLEL: int = 4
 
     BACK_HOST: str
@@ -16,6 +15,11 @@ class Settings(BaseSettings):
 
     DB_FILE: str = ".db"
 
+    DOWNLOADER_SOCKET_TIMEOUT: int = 10
+    DOWNLOADER_CONCURRENT_FRAGMENT_DOWNLOADS: int = 2
+    DOWNLOADER_OUTPUT_FORMAT: str = "mp4"
+
+    EXECUTOR_WORKERS_NUM: int = 4
 
 try:
     # noinspection PyArgumentList

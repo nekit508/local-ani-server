@@ -1,10 +1,18 @@
 import {DownloadTaskState} from "@/api/api";
 import ProgressBar from "@/components/ProgressBar";
 
+function resolve(state: DownloadTaskState) : [number, string, string] {
+    if (state.data.working) {
+        return [0, "WORKING", "text-green-600"]
+    } else if (state.data.error !== null) {
+        return [1, "ERROR", "text-red-400"]
+    } else {
+        return [2, "QUEUED", "text-orange-400"]
+    }
+}
+
 export default function ( { state }: { state: DownloadTaskState } ) {
-    const work_state = state.error != "" ? 2 : state.worker != -1 ? 1 : 0;
-    const work_state_text = work_state == 1 ? "WORKING" : work_state == 2 ? "ERROR" : "QUEUED"
-    const work_state_text_color = work_state == 1 ? "text-green-600" : work_state == 2 ? "text-red-400" : "text-orange-400"
+    const [work_state, work_state_text, work_state_text_color] = resolve(state)
 
     return (
         <div className="flex flex-col justify-start items-start default-cornered w-full p-2 gap-1">
@@ -14,17 +22,17 @@ export default function ( { state }: { state: DownloadTaskState } ) {
             </div>
 
             <span>
-                { `${state.title} (${state.source_title}) Ep. ${state.ordinal} ${state.quality}p` }
+                { `${state.data.name}` }
             </span>
 
-            { work_state == 1 ? <>
-                <ProgressBar progress={state.progress} outerStyle={"default-cornered w-full h-4"}/>
+            <span className="text-[9px] text-foreground/25">
+                { `into ${state.data.output_file}` }
+            </span>
 
-                <span className="text-wrap text-foreground/75 text-[9px]">
-                {state.state}
-                </span>
-            </> : work_state == 2 && <span className="text-xs text-red-400"> { state.error } </span> }
-
+            { work_state == 0 && <div className="w-full flex-row">
+                <ProgressBar progress={state.data.progress} outerStyle={"default-cornered flex-1 h-4"} text={state.data.speed}/>
+            </div> }
+            { work_state == 1 && <span className="text-xs text-red-400"> { state.data.error } </span> }
 
             <span className="text-[9px] text-foreground/25">{ `rev ${state.rev}` }</span>
         </div>
