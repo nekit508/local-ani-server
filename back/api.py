@@ -8,7 +8,7 @@ import auth
 import cli
 from back.config import settings
 from back.new_downloader import DownloadTask
-from back.new_executor import Executor, StateSnapshot, WorkerState, WorkerPhase, Worker
+from back.new_executor import Executor, StateSnapshot, WorkerState, Worker
 from back.scheme import ApiDownloadIn
 from misc import select
 
@@ -17,7 +17,7 @@ _cli = cli.CLI()
 
 _executor = Executor()
 for _ in range(settings.EXECUTOR_WORKERS_NUM):
-    _executor.spawn_worker()#.start()
+    _executor.spawn_worker()
 
 
 @router.get("/data_sources")
