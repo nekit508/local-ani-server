@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     JWT_ALG: str = "HS256"
     JWT_TOKEN_LIFETIME: int = 86400
-    DOWNLOAD_DIR: str = "."
+    DOWNLOAD_DIR: str = ".downloads"
     FRAGMENTS_PARALLEL: int = 4
 
     BACK_HOST: str
@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     DOWNLOADER_OUTPUT_FORMAT: str = "mp4"
 
     EXECUTOR_WORKERS_NUM: int = 4
+
+    ADMIN_SOCKET_FILES: list[str] = list()
 
 try:
     # noinspection PyArgumentList
