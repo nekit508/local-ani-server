@@ -8,7 +8,7 @@ from starlette import status
 
 from back.databases import main, User
 from back.services.users import login_, get_user_by_token_
-from scheme import LoginIn
+from back.scheme import LoginIn
 
 router = APIRouter(prefix="/back/auth", tags=["auth"])
 auth_token = OAuth2PasswordBearer(tokenUrl="/auth/login")

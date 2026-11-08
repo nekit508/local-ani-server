@@ -440,6 +440,7 @@ class WorkerState(State["Worker"]):
         return self.phase.phase_name
 
 
+# noinspection PyPep8Naming
 class Worker:
     """
     From outside, you can use only start and submit methods

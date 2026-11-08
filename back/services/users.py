@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from back.databases import main, User
-from back.security import decode_token, verify_password, create_token, hash_password
+from back.services.security import decode_token, verify_password, create_token, hash_password
 
 auto_user_session = main.auto_session
 

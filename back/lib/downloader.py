@@ -3,9 +3,9 @@ from pathlib import Path
 from anicli_api.player.base import Video
 from yt_dlp import YoutubeDL
 
-from back.cli import VideoURLPromise
+from back.lib.cli import VideoURLPromise
 from back.config import settings
-from back.new_executor import Task, Executor, TaskState, StateSnapshot, MCMPValue
+from back.lib.executor import Task, Executor, TaskState, StateSnapshot, MCMPValue
 
 
 class YTDLPLogger:

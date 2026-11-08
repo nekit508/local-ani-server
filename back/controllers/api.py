@@ -5,12 +5,12 @@ from starlette import status
 from starlette.responses import Response
 
 import auth
-import cli
+import back.lib.cli as cli
 from back.config import settings
-from back.new_downloader import DownloadTask
-from back.new_executor import Executor, StateSnapshot, WorkerState, Worker
+from back.lib.downloader import DownloadTask
+from back.lib.executor import Executor, StateSnapshot, WorkerState, Worker
 from back.scheme import ApiDownloadIn
-from misc import select
+from back.lib.misc import select
 
 router = APIRouter(prefix="/back/api", tags=["api"], dependencies=[Depends(auth.auth_token)])
 _cli = cli.CLI()

@@ -8,10 +8,6 @@ interface RouteParams {
     params: Promise<{ path: string[] }>
 }
 
-interface BackendTokenResponse {
-    token: string;
-}
-
 enum TokenActionType {
     DELETE = "DELETE",
     SAVE = "SAVE"
@@ -50,9 +46,9 @@ async function handleProxy(request: NextRequest, { params }: RouteParams): Promi
 
         // try to determine token invalidation
         // we are unauthorized but token was provided, so it's probably invalidated, and we need new
-        console.log(JSON.stringify(backendResponse))
+        //console.log(JSON.stringify(backendResponse))
         if (backendResponse.status === 401 && (await cookies()).has("auth_token")) {
-            console.log("inv redir")
+            //console.log("inv redir")
             const response = NextResponse.json(
                 { error: "Token is expired or invalidated or you are unauthorized" },
                 { status: backendResponse.status }

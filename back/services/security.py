@@ -2,8 +2,9 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from pwdlib import PasswordHash
+from pwdlib.exceptions import UnknownHashError
 
-from config import settings
+from back.config import settings
 
 _pwd = PasswordHash.recommended()
 
@@ -15,7 +16,7 @@ def hash_password(raw: str) -> str:
 def verify_password(raw: str = "dummy-password-for-timing", hashed: str = hash_password("dummy-wrong-password-for-timing")) -> bool:
     try:
         return _pwd.verify(raw, hashed)
-    except Exception:
+    except UnknownHashError:
         return False
 
 

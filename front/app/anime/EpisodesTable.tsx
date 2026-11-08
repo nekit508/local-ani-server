@@ -1,5 +1,5 @@
 import {AnimeInfo, download, Source} from "@/api/api";
-import {Dispatch, SetStateAction, useState} from "react";
+import React, {Dispatch, SetStateAction, useState} from "react";
 
 function send(source_title: string, ordinals: number[], setLock: Dispatch<SetStateAction<boolean>>, anime: AnimeInfo, extractor: string) {
     setLock(true)
@@ -10,7 +10,7 @@ function send(source_title: string, ordinals: number[], setLock: Dispatch<SetSta
         source_title: source_title,
         q_target: 2160,
         q_policy: "<",
-    }).then(res => {
+    }).then(_ => {
         setLock(false)
     })
 }

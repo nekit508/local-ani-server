@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from back.databases import Encoding, encoding
-from back.new_db import auto_session
+from back.lib.db import auto_session
 
 
 class Encoder:

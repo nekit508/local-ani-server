@@ -3,19 +3,21 @@ from contextlib import ExitStack, asynccontextmanager
 import click
 from fastapi import FastAPI
 
-import api
-import auth
+import back.controllers.api as api
+import back.controllers.auth as auth
 import back.databases
 from back.config import settings
 from back.services.users import create_new_user_
-from back.terminal_cli import TerminalCLI
+from back.lib.terminal_cli import TerminalCLI
 
 
 @click.group()
 def cli(): ...
 
+
 @cli.group()
 def user(): ...
+
 
 @user.command("create")
 @click.argument("username", type=str)
@@ -27,8 +29,9 @@ def create(username: str, password: str):
     else:
         print(f"Created user {user.login}:{user.id}")
 
+
 @asynccontextmanager
-async def lifespan(app):
+async def lifespan():
     # noinspection PyAbstractClass
     with ExitStack() as stack:
         stack.enter_context(back.databases.lifespan())

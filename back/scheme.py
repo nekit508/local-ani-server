@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from back.cli import TargetQuality, QualityPolicy
+from back.lib.cli import TargetQuality, QualityPolicy
 
 
 class LoginIn(BaseModel):

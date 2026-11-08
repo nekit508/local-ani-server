@@ -10,7 +10,6 @@ import anicli_api.source as sources_pkg
 from anicli_api.base import BaseExtractor, BaseAnime, BaseSource, BaseEpisode
 from anicli_api.player.base import Video, BaseVideoExtractor, ABCVideoExtractor
 from httpx import Timeout
-from yt_dlp.utils import sanitize_path
 
 
 class UnknownExtractor(Exception):
