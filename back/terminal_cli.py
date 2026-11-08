@@ -1,20 +1,44 @@
 import os
 import shlex
 import socket
+from contextlib import redirect_stdout, redirect_stderr, contextmanager
+from io import TextIOBase
 from selectors import DefaultSelector, EVENT_READ
 from threading import RLock, Thread
 
-from click import Group
+from click import Group, ClickException
+
+
+class Redirector(TextIOBase):
+    _printer: Printer
+
+    def __init__(self, printer: Printer):
+        self._printer = printer
+
+    def write(self, s: str) -> int:
+        return self._printer.print(s, end="")
 
 
 class Printer:
     _sock: socket.socket
+    _redirector: Redirector
 
     def __init__(self, sock: socket.socket):
         self._sock = sock
+        self._redirector = Redirector(self)
 
-    def print(self, msg: str, *args, **kwargs):
-        self._sock.sendall(f"{msg.format(*args, **kwargs)}\n".encode("utf-8"))
+    def print(self, msg: str, end: str = "\n", *args, **kwargs) -> int:
+        out = f"{msg.format(*args, **kwargs)}{end}"
+        self._sock.sendall(out.encode("utf-8"))
+        return len(out)
+
+    @property
+    @contextmanager
+    def redirect_std(self):
+        # it works btw
+        # noinspection PyTypeChecker
+        with redirect_stdout(self._redirector), redirect_stderr(self._redirector):
+            yield
 
 
 class AWorker:
@@ -73,6 +97,13 @@ class TerminalCLI(AWorker):
         self._sel = DefaultSelector()
         self._server_sockets = list(self._open_server(path) for path in paths)
 
+    @property
+    @contextmanager
+    def lifespan(self):
+        self.start()
+        yield
+        self.stop()
+
     def _open_server(self, path: str) -> socket.socket:
         if os.path.exists(path):
             os.unlink(path)
@@ -110,8 +141,11 @@ class TerminalCLI(AWorker):
     def _attach(self, sock: socket.socket):
         sock.setblocking(False)
         self._buffers[sock] = b""
-        self._printers[sock] = Printer(sock)
         self._sel.register(sock, EVENT_READ, "client")
+
+        io = Printer(sock)
+        io.print("las-cli > ", end="")
+        self._printers[sock] = io
 
     def _detach(self, sock: socket.socket):
         self._sel.unregister(sock)
@@ -128,21 +162,24 @@ class TerminalCLI(AWorker):
                     self._detach(sock)
                     break
 
-                self._buffers[sock] += data
+                io = self._printers[sock]
 
+                self._buffers[sock] += data
                 splits = self._buffers[sock].split(b"\n")
                 self._buffers[sock] = splits[-1]
 
                 for split in splits[:-1]:
-                    self._handle_command(split.decode("utf-8"), self._printers[sock])
+                    self._handle_command(split.decode("utf-8"), io)
+
+                io.print("las-cli > ", end="")
             except BlockingIOError:
                 break
 
-
     def _handle_command(self, line: str, io: Printer):
         try:
-            self._cli.main(args=shlex.split(line), standalone_mode=False, obj=io)
-        except Exception as e:
+            with io.redirect_std:
+                self._cli.main(args=shlex.split(line), standalone_mode=False, obj=io)
+        except ClickException as e:
             io.print(f"Error: {e}")
 
     def stop(self):

@@ -1,48 +1,39 @@
-from sqlalchemy import String, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Session
 
-from back.new_db import DB
+from back.databases import Encoding, encoding
+from back.new_db import auto_session
 
 
 class Encoder:
-    db: DB
+    auto_encoding_session = auto_session(encoding.with_session)
 
-    def __init__(self):
-        self.db = DB(".db/encoders.db")
+    @auto_encoding_session
+    def encode(self, name: str, session: Session = None) -> int:
+        id_ = session.scalar(select(Encoding.id).where(Encoding.name == name))
+        if id_ is not None:
+            return id_
 
-        class Encoding(self.db.Base):
-            __tablename__ = "encoding"
-            id: Mapped[int] = mapped_column(primary_key=True)
-            name: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+        try:
+            encoding = Encoding()
+            encoding.name = name
+            session.add(encoding)
 
-        self.Encoding = Encoding
+            session.flush()
 
-    def encode(self, name: str) -> int:
-        with self.db.with_session() as session:
-            id_ = session.scalar(select(self.Encoding.id).where(self.Encoding.name == name))
+            # noinspection PyTypeChecker
+            return encoding.id
+        except IntegrityError:
+            session.rollback()
+            id_ = session.scalar(select(Encoding.id).where(Encoding.name == name))
             if id_ is not None:
                 return id_
+            raise
 
-            try:
-                encoding = self.Encoding()
-                encoding.name = name
-                session.add(encoding)
-
-                session.flush()
-
-                # noinspection PyTypeChecker
-                return encoding.id
-            except IntegrityError:
-                session.rollback()
-                id_ = session.scalar(select(self.Encoding.id).where(self.Encoding.name == name))
-                if id_ is not None:
-                    return id_
-                raise
-
-    def decode(self, id_: int) -> str | None:
-        with self.db.with_session() as session:
-            return session.scalar(select(self.Encoding.name).where(self.Encoding.id == id_))
+    @auto_encoding_session
+    def decode(self, id_: int, session: Session = None) -> str | None:
+        return session.scalar(select(Encoding.name).where(Encoding.id == id_))
 
 
 encoder = Encoder()

@@ -12,7 +12,7 @@ def hash_password(raw: str) -> str:
     return _pwd.hash(raw)
 
 
-def verify_password(raw: str = "dummy-password-for-timing", hashed: str = hash("dummy-password-for-timing")) -> bool:
+def verify_password(raw: str = "dummy-password-for-timing", hashed: str = hash_password("dummy-wrong-password-for-timing")) -> bool:
     try:
         return _pwd.verify(raw, hashed)
     except Exception:

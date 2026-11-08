@@ -1,36 +1,38 @@
-from contextlib import ExitStack, asynccontextmanager, contextmanager
+from contextlib import ExitStack, asynccontextmanager
 
 import click
 from fastapi import FastAPI
 
-import db, auth, api
+import api
+import auth
+import back.databases
 from back.config import settings
-from back.terminal_cli import TerminalCLI, Printer
+from back.services.users import create_new_user_
+from back.terminal_cli import TerminalCLI
 
 
-@click.group
+@click.group()
 def cli(): ...
 
-@cli.command("dih")
-@click.option("-s", type=int, default=7)
-@click.pass_obj
-def dih(obj: Printer, s: int):
-    obj.print(f"dih is {s}cm long")
+@cli.group()
+def user(): ...
 
-@contextmanager
-def terminal_cli():
-    _ = TerminalCLI(settings.ADMIN_SOCKETS, cli)
-    _.start()
-    yield
-    _.stop()
-
+@user.command("create")
+@click.argument("username", type=str)
+@click.argument("password", type=str)
+def create(username: str, password: str):
+    user = create_new_user_(username, password)
+    if user is None:
+        print("User with same username already exists")
+    else:
+        print(f"Created user {user.login}:{user.id}")
 
 @asynccontextmanager
 async def lifespan(app):
     # noinspection PyAbstractClass
     with ExitStack() as stack:
-        stack.enter_context(db.lifespan(app))
-        stack.enter_context(terminal_cli())
+        stack.enter_context(back.databases.lifespan())
+        stack.enter_context(TerminalCLI(settings.ADMIN_SOCKETS, cli).lifespan)
         yield
 
 application = FastAPI(title="backend", lifespan=lifespan)

@@ -8,6 +8,7 @@ services:
         volumes:
             - ../back/.local:${DOWNLOAD_DIR}:ro # TODO remove after putting services in this container
             - ./proxy.conf.template:/etc/nginx/templates/default.conf.template:ro
+            - ./favicon.ico:/usr/share/anicli/favicon.ico:ro
         environment:
             ANICLI_HOST: ${ANICLI_HOST}
             FRONT_PORT: ${FRONT_PORT}

@@ -5,6 +5,18 @@ from sqlalchemy import create_engine, Engine, event
 from sqlalchemy.orm import scoped_session, sessionmaker, Session, DeclarativeBase
 
 
+def auto_session(session_starter):
+    def deco(func):
+        def wrapper(*args, session: Session = None, **kwargs):
+            if session is None:
+                with session_starter() as session:
+                    return func(*args, session=session, **kwargs)
+            else:
+                return func(*args, session=session, **kwargs)
+        return wrapper
+    return deco
+
+
 def create_db(file: str) -> tuple[
     Engine,
     Callable[[], Generator[Session, Any, None]],
@@ -28,18 +40,18 @@ def create_db(file: str) -> tuple[
         cur.execute("PRAGMA busy_timeout=5000")
         cur.close()
 
-    session_factory = scoped_session(sessionmaker(bind=engine))
+    session_factory = scoped_session(sessionmaker(bind=engine, expire_on_commit=False))
 
     def gen_session() -> Generator[Session, Any, None]:
         session = session_factory()
         try:
             yield session
             session.commit()
-        except Exception as e:
+        except Exception:
             session.rollback()
             raise
         finally:
-            session.remove()
+            session_factory.remove()
 
     with_session: Callable[[], _GeneratorContextManager[Session]] = contextmanager(gen_session)
 
@@ -59,3 +71,4 @@ def create_db(file: str) -> tuple[
 class DB:
     def __init__(self, file: str):
         self.engine, self.gen_session, self.with_session, self.Base, self.lifespan = create_db(file)
+        self.auto_session = auto_session(self.with_session)

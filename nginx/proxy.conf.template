@@ -49,4 +49,11 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 360s;
     }
+
+    location = /favicon.ico {
+        alias /usr/share/anicli/favicon.ico;
+        expires 30d;
+        access_log off;
+        log_not_found off;
+    }
 }
