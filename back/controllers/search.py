@@ -7,7 +7,7 @@ from back.lib.misc import local_cache, LocalCache
 from back.services.encoder import encoder
 from back.services.videos import videos
 
-router = APIRouter(prefix="/back/search", tags=["api"], dependencies=[Depends(auth.auth_token)])
+router = APIRouter(prefix="/back/search", tags=["api"], dependencies=[Depends(auth.get_user)])
 
 @local_cache
 def _anime_encode_source_title_(title: str) -> int:

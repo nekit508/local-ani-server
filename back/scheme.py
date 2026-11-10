@@ -15,3 +15,16 @@ class ApiDownloadIn(BaseModel):
     source_title: str
     q_target: TargetQuality
     q_policy: QualityPolicy
+
+
+class VideosDownloadInPart(BaseModel):
+    ordinal: int
+    title: int
+    source: int
+
+
+class VideosDownloadIn(BaseModel):
+    targets: list[VideosDownloadInPart]
+    q_target: TargetQuality
+    q_policy: QualityPolicy
+    extractor: str

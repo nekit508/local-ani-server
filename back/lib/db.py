@@ -51,7 +51,7 @@ def create_db(file: str) -> tuple[
             session.rollback()
             raise
         finally:
-            session_factory.remove()
+            session.close()
 
     with_session: Callable[[], _GeneratorContextManager[Session]] = contextmanager(gen_session)
 
