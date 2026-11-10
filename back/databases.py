@@ -38,10 +38,10 @@ class Encoding(encoding.Base):
     name: Mapped[str] = mapped_column(String(256), unique=True, index=True)
 
 
-class VideoState(int, Enum):
-    unknown = -1
-    loading = 0
-    loaded = 1
+class VideoState(str, Enum):
+    unknown = "unknown"
+    loading = "loading"
+    loaded = "loaded"
 
 
 class Video(videos.Base):
@@ -50,5 +50,5 @@ class Video(videos.Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     title_id: Mapped[int] = mapped_column(index=True)
     source_id: Mapped[int] = mapped_column(index=True)
-    ordinal: Mapped[int] = mapped_column()
+    ordinal: Mapped[int] = mapped_column(index=True)
     state: Mapped[VideoState] = mapped_column(default=VideoState.unknown)

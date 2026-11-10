@@ -6,6 +6,7 @@ from yt_dlp import YoutubeDL
 from back.lib.cli import VideoURLPromise
 from back.config import settings
 from back.lib.executor import Task, Executor, TaskState, StateSnapshot, MCMPValue
+from back.services.videos import videos
 
 
 class YTDLPLogger:
@@ -25,21 +26,28 @@ class YTDLPLogger:
 class DownloadTaskState(TaskState["DownloadTask"]):
     speed: str
     progress: float
-    output_file: Path|None
     output_format: str
+    output_file: Path | None
     name: str
 
+    title_id: int
+    source_id: int
+    ordinal: int
+
     _transfer_to_snapshot_fields = TaskState._transfer_to_snapshot_fields.copy()
-    _transfer_to_snapshot_fields.extend(("speed", "progress", "output_file", "name", "output_format"))
+    _transfer_to_snapshot_fields.extend(("speed", "progress", "name", "output_format", "output_file", "title_id", "source_id", "ordinal"))
     print(f"DownloadTaskState t2sf {_transfer_to_snapshot_fields}")
 
     def __init__(self, states: MCMPValue[dict[int, StateSnapshot]]):
         super().__init__(states)
         self.speed = ""
         self.progress = 0
-        self.output_file = None
         self.output_format = ""
+        self.output_file = None
         self.name = ""
+        self.title_id = 0
+        self.source_id = 0
+        self.ordinal = 0
 
 class DownloadTask(Task[DownloadTaskState]):
     _video_promise: VideoURLPromise
@@ -56,12 +64,18 @@ class DownloadTask(Task[DownloadTaskState]):
                  executor: "Executor",
                  name: str,
                  video: VideoURLPromise,
-                 output_file: Path,
+                 title_id: int,
+                 source_id: int,
+                 ordinal: int,
                  socket_timeout: int | None = None,
                  concurrent_fragment_downloads: int | None = None,
                  output_format: str | None = None):
         super().__init__(executor)
         self._state.name = name
+
+        self._state.title_id = title_id
+        self._state.source_id = source_id
+        self._state.ordinal = ordinal
 
         self._video = None
         self._video_promise = video
@@ -71,7 +85,12 @@ class DownloadTask(Task[DownloadTaskState]):
         self._concurrent_fragment_downloads = settings.DOWNLOADER_CONCURRENT_FRAGMENT_DOWNLOADS if concurrent_fragment_downloads is None else concurrent_fragment_downloads
         self._state.output_format = settings.DOWNLOADER_OUTPUT_FORMAT if output_format is None else output_format
 
-        self._state.output_file = output_file.with_suffix("." + self._state.output_format)
+        self._state.output_file = (
+                Path(settings.DOWNLOAD_DIR) /
+                str(self._state.title_id) /
+                str(self._state.source_id) /
+                str(self._state.ordinal)
+        ).with_suffix(f".{self._state.output_format}")
 
         self._state.commit()
 
@@ -79,12 +98,26 @@ class DownloadTask(Task[DownloadTaskState]):
         return DownloadTaskState(states)
 
     def _execute(self):
+        if not videos.try_create(self._state.title_id, self._state.source_id, self._state.ordinal):
+            return
+
         self._video = self._video_promise()
 
         with YoutubeDL(self._create_opts()) as ydl:
+            if not videos.loading(self._state.title_id, self._state.source_id, self._state.ordinal):
+                self.update_state_error("Got null.")
+
             code = ydl.download([self._video.url])
+
             if code != 0:
-                raise RuntimeError(f"Got non-zero code: {code}.")
+                raise RuntimeError(f"Got non-zero code from ydl: {code}.")
+
+            if not videos.loaded(self._state.title_id, self._state.source_id, self._state.ordinal):
+                self.update_state_error("Got null.")
+
+    def update_state_error(self, msg: str = ""):
+        raise RuntimeError(
+            f"Failed to update state of video {self._state.title_id}:{self._state.source_id}:{self._state.ordinal}. " + msg)
 
     def _create_opts(self):
         return {
@@ -93,7 +126,7 @@ class DownloadTask(Task[DownloadTaskState]):
             "logger": self._logger,
             "progress_hooks": [self._state_hook],
             "concurrent_fragment_downloads": 0,
-            "outtmpl": str(self._state.output_file.resolve().absolute()),
+            "outtmpl": str(self._state.output_file.resolve()),
             "merge_output_format": self._state.output_format,
             "format": "bv*+ba/b"
         }

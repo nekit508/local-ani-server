@@ -3,11 +3,9 @@ from contextlib import ExitStack, asynccontextmanager
 import click
 from fastapi import FastAPI
 
-import back.controllers.api as api
-import back.controllers.auth as auth
 import back.databases
 from back.config import settings
-from back.controllers import search
+from back.controllers import search, api, auth, videos
 from back.services.users import create_new_user_
 from back.lib.terminal_cli import TerminalCLI
 
@@ -45,3 +43,4 @@ application = FastAPI(title="backend", lifespan=lifespan)
 application.include_router(auth.router)
 application.include_router(api.router)
 application.include_router(search.router)
+application.include_router(videos.router)

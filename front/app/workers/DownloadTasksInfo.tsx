@@ -55,6 +55,7 @@ export default function () {
     return (
         <div className="flex flex-wrap flex-col justify-start items-center gap-4 p-8 w-1/2">
             { req === undefined ? "Loading" : !req ? "Error" : statesRef.current.values().toArray().map(state => {
+                console.log(state)
                 return <DownloadTaskInfo key={state.id} state={state}/>
             }) }
         </div>

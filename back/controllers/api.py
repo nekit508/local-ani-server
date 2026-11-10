@@ -1,120 +1,25 @@
-from pathlib import Path
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette import status
 from starlette.responses import Response
 
 import back.controllers.auth as auth
-import back.lib.cli as cli
 from back.config import settings
-from back.lib.downloader import DownloadTask
 from back.lib.executor import Executor, StateSnapshot, WorkerState, Worker
-from back.scheme import ApiDownloadIn
-from back.lib.misc import select
-from back.services.encoder import encoder
 
-router = APIRouter(prefix="/back/api", tags=["api"], dependencies=[Depends(auth.auth_token)])
-_cli = cli.CLI()
+router = APIRouter(prefix="/back/api", tags=["api"], dependencies=[Depends(auth.get_user)])
 
-_executor = Executor()
+# TODO replace executor somewhere in services/lib
+# used in videos api for now
+executor = Executor()
 for _ in range(settings.EXECUTOR_WORKERS_NUM):
-    _executor.spawn_worker()
-
-
-@router.get("/data_sources")
-def _data_sources() -> list[str]:
-    return list(_cli.extractors_names)
-
-
-@router.get("/search")
-def _search(
-        source: str = Query(),
-        query: str = Query()
-):
-    try:
-        return list(select(f, ["title", "thumbnail"]) for f in _cli.search(source, query))
-    except cli.UnknownExtractor as e:
-        return HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"invalid source {e.extractor}"
-        )
-
-
-@router.get("/anime")
-def _anime(
-        title: str = Query(),
-        source: str = Query()
-):
-    try:
-        anime = _cli.search_exact(source, title)
-
-        if anime is None:
-            return HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Title {title} not found in {source}"
-            )
-
-        episodes = list({
-                            "title": episode.title,
-                            "ordinal": episode.ordinal,
-                            "sources": list({
-                                                "title": source.title,
-                                                "url": source.url,
-                                                "watch_url": ""
-                                            } for source in episode.get_sources())
-                        } for episode in anime.get_episodes())
-
-        return {
-            "title": anime.title,
-            "description": anime.description,
-            "thumbnail": anime.thumbnail,
-            "episodes": episodes
-        }
-    except cli.UnknownExtractor as e:
-        return HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"invalid source {e.extractor}"
-        )
-
-
-@router.post("/download")
-def _download(
-        body: ApiDownloadIn = Body()
-):
-    try:
-        providers = _cli.get_url_providers(body.extractor, body.title, body.source_title, body.ordinals, body.q_target, body.q_policy)
-
-        if providers is None:
-            return HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Title {body.title} not found in {body.extractor}"
-            )
-
-        failed: set[int] = set(body.ordinals)
-
-        with encoder.with_session as session:
-            for ordinal, prov in providers:
-                failed.remove(ordinal)
-                _executor.submit_task(DownloadTask(
-                    _executor,
-                    f"{body.title} - {body.source_title} Ep. {ordinal}",
-                    prov,
-                    Path(Path(settings.DOWNLOAD_DIR) / body.title / body.source_title / str(ordinal))
-                ))
-
-        return failed
-    except cli.UnknownExtractor as e:
-        return HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"invalid source {e.extractor}"
-        )
+    executor.spawn_worker()
 
 
 @router.get("/tasks")
 def _tasks(
         since: int = Query(0)
 ):
-    with _executor.tasks_states.read as snapshots:
+    with executor.tasks_states.read as snapshots:
         snapshots: dict[int, StateSnapshot]
         return list(state.dict for state in snapshots.values() if state.rev >= since)
 
@@ -123,7 +28,7 @@ def _tasks(
 def _workers(
         since: int = Query(0)
 ):
-    with _executor.workers_states.read as snapshots:
+    with executor.workers_states.read as snapshots:
         snapshots: dict[int, StateSnapshot]
         return list(state.dict for state in snapshots.values() if state.rev >= since)
 
@@ -131,7 +36,7 @@ def _workers(
 def _start_worker(
         wid: int
 ):
-    with _executor.workers_states.read as snapshots:
+    with executor.workers_states.read as snapshots:
         snapshots: dict[int, StateSnapshot[WorkerState]]
         if wid not in snapshots:
             return HTTPException(
@@ -155,7 +60,7 @@ def _start_worker(
 def _stop_worker(
         wid: int
 ):
-    with _executor.workers_states.read as snapshots:
+    with executor.workers_states.read as snapshots:
         snapshots: dict[int, StateSnapshot[WorkerState]]
         if wid not in snapshots:
             return HTTPException(

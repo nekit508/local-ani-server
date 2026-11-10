@@ -1,10 +1,23 @@
 import React, {Dispatch, SetStateAction, useState} from "react";
 import {Anime, EpisodeSource} from "@/api/search";
+import {download, DownloadVideoRequest} from "@/api/videos";
 
 // noinspection JSUnusedLocalSymbols
-function send(source_title: string, ordinals: number[], setLock: Dispatch<SetStateAction<boolean>>, anime: Anime, extractor: string) {
+function send(source: number, ordinals: number[], setLock: Dispatch<SetStateAction<boolean>>, anime: Anime, extractor: string) {
     setLock(true)
 
+    download({
+        extractor: extractor,
+        q_policy: "<",
+        q_target: 2160,
+        targets: ordinals.map<DownloadVideoRequest>(ord => {
+            return {
+                title: anime.id,
+                source: source,
+                ordinal: ord
+            }
+        })
+    }).then(() => setLock(false))
 }
 
 export default function ({ anime, extractor } : { anime: Anime, extractor: string } ) {
@@ -43,7 +56,7 @@ export default function ({ anime, extractor } : { anime: Anime, extractor: strin
                             onClick={e => {
                                 e.preventDefault()
                                 if (has)
-                                    send(source?.title as string, [episode.ordinal], setLock, anime, extractor)
+                                    send(source?.id as number, [episode.ordinal], setLock, anime, extractor)
                             }}
                             disabled={lock}
                         >
