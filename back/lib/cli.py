@@ -115,7 +115,7 @@ class CLI:
 
     def get_url_providers(self, extractor: str, title: str, source_title: str, episodes_ords: list[int],
                           q_target: TargetQuality, q_policy: QualityPolicy) -> list[tuple[int, VideoURLPromise | None]] | None:
-        episodes = self._get_episodes(extractor, title)
+        _, episodes = self.search_exact_and_get_episodes(extractor, title)
 
         if episodes is None:
             return None
@@ -124,6 +124,8 @@ class CLI:
                     for episode_ord in episodes_ords for source in episodes[episode_ord-1].get_sources() if source.title == source_title)
 
     @lru_cache
-    def _get_episodes(self, extractor: str, title: str) -> Sequence[BaseEpisode]:
+    def search_exact_and_get_episodes(self, extractor: str, title: str) -> tuple[BaseAnime, Sequence[BaseEpisode]]:
         anime = self.search_exact(extractor, title)
-        return None if anime is None else anime.get_episodes()
+        return (None, None) if anime is None else (anime, anime.get_episodes())
+
+cli = CLI()

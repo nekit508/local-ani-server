@@ -3,11 +3,11 @@
 import {ComponentType, Dispatch, SetStateAction, useCallback, useEffect, useRef, useState} from "react";
 import {waited} from "@/api/core";
 
-export default function <T>(
+export default function AsyncComponent<T>(
     {
         promiseAction, Initial, OnOkay, OnError, externalState = undefined, deps = []
     } : {
-        promiseAction: () => [Promise<T>, AbortController],
+        promiseAction: (controller: AbortSignal) => Promise<T>,
         Initial: ComponentType,
         OnOkay: ComponentType<{object: T, setter: Dispatch<SetStateAction<T | undefined>>, reloader: () => void}>,
         OnError: ComponentType<{reloader: () => void, error: any}>
@@ -32,7 +32,8 @@ export default function <T>(
 
     useEffect(() => {
         setError(null)
-        const [promise, controller] = actionRef.current()
+        const controller = new AbortController()
+        const promise = actionRef.current(controller.signal)
         waited([promise, controller.signal], setState, setError)
         return () => controller.abort()
         // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,17 +1,18 @@
-import {anime} from "@/api/api";
 import APIFail from "@/components/APIFail";
 import AnimeComponent from "@/app/anime/AnimeComponent";
+import {anime} from "@/api/search";
 
-export default async function ({ searchParams } : { searchParams: Promise<{ [key:string] : string | string[] | undefined}>}) {
+export default async function ({ searchParams } : { searchParams: Promise<{ // noinspection JSUnusedLocalSymbols
+        [key:string] : string | string[] | undefined}>}) {
     const params = await searchParams
-    const title = params.title as string
-    const source = params.source as string
+    const title = Number.parseInt(params.title as string)
+    const extractor = params.extractor as string
 
-    const animeInfo = await anime(source, title)
+    const ani = await anime(extractor, title)
 
-    return animeInfo.ok ? (
+    return ani.ok ? (
         <div className="flex flex-col justify-start items-center">
-            <AnimeComponent anime={animeInfo.data()} extractor={source}/>
+            <AnimeComponent anime={ani.data()} extractor={extractor}/>
         </div>
-    ) : <APIFail message={animeInfo.error_str()}/>
+    ) : <APIFail message={ani.error_str()}/>
 }

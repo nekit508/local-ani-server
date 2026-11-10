@@ -7,6 +7,7 @@ import back.controllers.api as api
 import back.controllers.auth as auth
 import back.databases
 from back.config import settings
+from back.controllers import search
 from back.services.users import create_new_user_
 from back.lib.terminal_cli import TerminalCLI
 
@@ -30,8 +31,9 @@ def create(username: str, password: str):
         print(f"Created user {user.login}:{user.id}")
 
 
+# noinspection PyUnusedLocal
 @asynccontextmanager
-async def lifespan():
+async def lifespan(app):
     # noinspection PyAbstractClass
     with ExitStack() as stack:
         stack.enter_context(back.databases.lifespan())
@@ -42,3 +44,4 @@ application = FastAPI(title="backend", lifespan=lifespan)
 
 application.include_router(auth.router)
 application.include_router(api.router)
+application.include_router(search.router)

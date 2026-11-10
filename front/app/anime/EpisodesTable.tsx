@@ -1,22 +1,14 @@
-import {AnimeInfo, download, Source} from "@/api/api";
 import React, {Dispatch, SetStateAction, useState} from "react";
+import {Anime, EpisodeSource} from "@/api/search";
 
-function send(source_title: string, ordinals: number[], setLock: Dispatch<SetStateAction<boolean>>, anime: AnimeInfo, extractor: string) {
+// noinspection JSUnusedLocalSymbols
+function send(source_title: string, ordinals: number[], setLock: Dispatch<SetStateAction<boolean>>, anime: Anime, extractor: string) {
     setLock(true)
-    download({
-        extractor: extractor,
-        ordinals: ordinals,
-        title: anime.title,
-        source_title: source_title,
-        q_target: 2160,
-        q_policy: "<",
-    }).then(_ => {
-        setLock(false)
-    })
+
 }
 
-export default function ({ anime, extractor } : { anime: AnimeInfo, extractor: string } ) {
-    const sources = new Map<string, Source>()
+export default function ({ anime, extractor } : { anime: Anime, extractor: string } ) {
+    const sources = new Map<string, EpisodeSource>()
 
     const [lock, setLock] = useState(false)
 
@@ -50,13 +42,12 @@ export default function ({ anime, extractor } : { anime: AnimeInfo, extractor: s
                             className="btn-primary"
                             onClick={e => {
                                 e.preventDefault()
-                                if (has) {
-                                    console.log(source)
+                                if (has)
                                     send(source?.title as string, [episode.ordinal], setLock, anime, extractor)
-                                }
                             }}
                             disabled={lock}
                         >
+                            { source?.loaded ? "loaded" : "load" }
                         </button>
                     ) : <div key={`${episode.ordinal}$$${key}`}></div>
                 }))

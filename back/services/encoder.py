@@ -1,3 +1,6 @@
+from contextlib import contextmanager
+from typing import Any, Generator
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -8,6 +11,12 @@ from back.lib.db import auto_session
 
 class Encoder:
     auto_encoding_session = auto_session(encoding.with_session)
+
+    @property
+    @contextmanager
+    def with_session(self) -> Generator[Session, Any, None]:
+        with encoding.with_session() as session:
+            yield session
 
     @auto_encoding_session
     def encode(self, name: str, session: Session = None) -> int:

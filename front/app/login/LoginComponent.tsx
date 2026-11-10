@@ -4,15 +4,14 @@ import "@/app/globals.css"
 import {ChangeEventHandler, SubmitEventHandler, useState} from "react";
 import {login} from "@/api/login";
 import {waited} from "@/api/core";
-import {useRouter, useSearchParams} from "next/navigation";
+import {useRouter} from "next/navigation";
 
-export default function () {
+export default function ({ target } : { target: string }) {
     const [data, setData] = useState({
         "login": "",
         "password": ""
     });
     const [state, setState] = useState<string | null | undefined>(null)
-    const params = useSearchParams()
     const router = useRouter();
 
     const onChange: ChangeEventHandler<HTMLInputElement, HTMLInputElement> = function (e) {
@@ -26,7 +25,7 @@ export default function () {
             if (res !== null && res !== undefined) {
                 if (res.ok) {
                     setState(null)
-                    router.replace(params.get("from") || "/home") // TODO FIXME vulnerability open redirect
+                    router.replace(target)
                     router.refresh()
                 } else {
                     setState(res.error_str())

@@ -1,5 +1,6 @@
 import datetime
 from contextlib import ExitStack, contextmanager
+from enum import Enum
 
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
@@ -8,12 +9,13 @@ from back.lib.db import DB
 
 main = DB(".db/main")
 encoding = DB(".db/encoding")
+videos = DB(".db/videos")
 
 @contextmanager
 def lifespan():
     # noinspection PyAbstractClass
     with ExitStack() as stack:
-        for db in [main, encoding]:
+        for db in [main, encoding, videos]:
             stack.enter_context(db.lifespan())
         yield
 
@@ -34,3 +36,19 @@ class Encoding(encoding.Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+
+
+class VideoState(int, Enum):
+    unknown = -1
+    loading = 0
+    loaded = 1
+
+
+class Video(videos.Base):
+    __tablename__ = "videos"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title_id: Mapped[int] = mapped_column(index=True)
+    source_id: Mapped[int] = mapped_column(index=True)
+    ordinal: Mapped[int] = mapped_column()
+    state: Mapped[VideoState] = mapped_column(default=VideoState.unknown)

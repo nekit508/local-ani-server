@@ -14,12 +14,13 @@ const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
       {
-        protocol: 'https',
-        hostname: '**',
+        protocol: "https",
+        hostname: "**",
       },
     ],
   },
-  allowedDevOrigins: ["ani-cli.com"] // only dev shit
+  allowedDevOrigins: ["ani-cli.com"], // only dev shit
+  output: "standalone"
 };
 
 export default nextConfig;

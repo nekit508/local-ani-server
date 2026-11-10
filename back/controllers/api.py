@@ -4,13 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from starlette import status
 from starlette.responses import Response
 
-import auth
+import back.controllers.auth as auth
 import back.lib.cli as cli
 from back.config import settings
 from back.lib.downloader import DownloadTask
 from back.lib.executor import Executor, StateSnapshot, WorkerState, Worker
 from back.scheme import ApiDownloadIn
 from back.lib.misc import select
+from back.services.encoder import encoder
 
 router = APIRouter(prefix="/back/api", tags=["api"], dependencies=[Depends(auth.auth_token)])
 _cli = cli.CLI()
@@ -53,7 +54,15 @@ def _anime(
                 detail=f"Title {title} not found in {source}"
             )
 
-        episodes = list({"title": episode.title, "ordinal": episode.ordinal, "sources": list({"title": source.title, "url": source.url} for source in episode.get_sources())} for episode in anime.get_episodes())
+        episodes = list({
+                            "title": episode.title,
+                            "ordinal": episode.ordinal,
+                            "sources": list({
+                                                "title": source.title,
+                                                "url": source.url,
+                                                "watch_url": ""
+                                            } for source in episode.get_sources())
+                        } for episode in anime.get_episodes())
 
         return {
             "title": anime.title,
@@ -83,14 +92,15 @@ def _download(
 
         failed: set[int] = set(body.ordinals)
 
-        for ordinal, prov in providers:
-            failed.remove(ordinal)
-            _executor.submit_task(DownloadTask(
-                _executor,
-                f"{body.title} - {body.source_title} Ep. {ordinal}",
-                prov,
-                Path(Path(settings.DOWNLOAD_DIR) / body.title / body.source_title / str(ordinal))
-            ))
+        with encoder.with_session as session:
+            for ordinal, prov in providers:
+                failed.remove(ordinal)
+                _executor.submit_task(DownloadTask(
+                    _executor,
+                    f"{body.title} - {body.source_title} Ep. {ordinal}",
+                    prov,
+                    Path(Path(settings.DOWNLOAD_DIR) / body.title / body.source_title / str(ordinal))
+                ))
 
         return failed
     except cli.UnknownExtractor as e:
